@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <sys/prctl.h>
 
+//#include <../system/system_server.h>
 #include <system_server.h>
 #include <gui.h>
 #include <input.h>
