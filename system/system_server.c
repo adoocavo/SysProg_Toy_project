@@ -1,16 +1,17 @@
 #include <stdio.h>
 #include <sys/prctl.h>
 
-#include <system_server.h>
-#include <gui.h>
-#include <input.h>
-#include <web_server.h>
+#include "system_server.h"
+#include "./../ui/gui.h"
+#include "./../ui/input.h"
+#include "./../web_server/web_server.h"
 
 int system_server()
 {
     printf("나 system_server 프로세스!\n");
 
-    while (1) {
+    while (1) 
+    {
         sleep(1);
     }
 

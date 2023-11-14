@@ -8,16 +8,22 @@
 
 #1. Macros
 CC = gcc
-CFLAGS = -g -W -Wall -o
-SRC = system_server.c \
-	system_server.h         
+CFLAGS_c = -g -W -Wall -c
+
+SRCs = system_server.c #\
+	system_server.h
+
+INCs = system_server.h \
+	./../ui/gui.h \
+	./../ui/input.h \
+	./../web_server/web_server.h         
 
 #2. targets
 all : system_server.o
 	
 
-system_server.o : ${SRC}
-	${CC} ${CFLAGS} system_server.o ${SRC}
+system_server.o : ${SRCs} ${INCs}
+	${CC} ${CFLAGS_c} system_server.o ${SRCs}
 
 #3. clean
 clean :
