@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <sys/wait.h>
 
-#include <system_server.h>
-#include <gui.h>
-#include <input.h>
-#include <web_server.h>
+#include "./system/system_server.h"
+#include "./ui/gui.h"
+#include "./ui/input.h"
+#include "./web_server/web_server.h"
 
 int main()
 {
