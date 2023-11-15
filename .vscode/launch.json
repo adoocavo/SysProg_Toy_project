@@ -1,0 +1,27 @@
+{
+    // IntelliSense를 사용하여 가능한 특성에 대해 알아보세요.
+    // ?? : 직접 변경하는 속성값들??
+    "version": "0.2.0",
+    "configurations": 
+    [
+        {
+            "name": "gdb - toy_system_debug",                       // name : 디버깅 옵션 이름
+            "type": "cppdbg",                                           // type : 
+            "request": "launch",
+            "program": "${workspaceFolder}/toy_system",                 // prograam : 디버깅 대상 실행 file 절대경로 
+            "args": [],
+            "stopAtEntry": true,                                        // stopAtEntry : 디버깅 수행 시 main에서 중단 여부 결정
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,                                   // externalConsole : false -> 실행 결과가 Vscode terminal에 출력
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
