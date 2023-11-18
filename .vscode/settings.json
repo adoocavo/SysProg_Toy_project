@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "input.h": "c",
+        "types.h": "c",
+        "unistd.h": "c",
+        "prctl.h": "c",
+        "system_server.h": "c",
+        "web_server.h": "c"
+    }
+}
