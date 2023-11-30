@@ -10,8 +10,7 @@
 CC = gcc
 CFLAGS_c = -g -W -Wall -c
 
-SRCs = system_server.c #\
-	system_server.h
+SRCs = system_server.c \
 
 INCs = system_server.h \
 	./../ui/gui.h \

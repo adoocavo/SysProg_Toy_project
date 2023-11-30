@@ -1,16 +1,91 @@
 #include <stdio.h>
 #include <sys/wait.h>
+#include <sys/signal.h>
+#include <errno.h>
 
 #include "./system/system_server.h"
 #include "./ui/gui.h"
 #include "./ui/input.h"
 #include "./web_server/web_server.h"
+#include "./project_libs/time/currTime.h"
+
+/**
+ * @note num of forked process
+*/
+#define N 4;       
+
+/**
+ * @note num of forked process
+*/
+static volatile int childProcNum;
+
+/**************** SIGCHLD : non-blocking handler ****************/
+static void sigchldHandler(int sig)
+{
+    printf("%s handler: Caught SIGCHLD\n", currTime("%T"));
+
+    int status, savedErrno;
+    pid_t id;
+
+    savedErrno = errno;
+
+
+    /**
+     * @note waitpid : child status 뱐화 감지 -> resource 반환
+    */
+    while((id = waitpid(-1, &status, WNOHANG)) > 0) 
+    {
+        printf("%s handler: Reaped child %ld - \n", currTime("%T"), (long) id);
+        --childProcNum;
+    }
+
+    /**
+     * @note waitpid()함수 실행 error 확인 -> waitpid error msg 출력
+    */
+    if(id == -1 && errno != ECHILD) perror("waitpid");
+
+    printf("%s handler: returning\n", currTime("%T"));
+
+    errno = savedErrno;
+
+
+}
+/**************** SIGCHLD : non-blocking handler ****************/
+
+
 
 int main()
 {
 	pid_t spid, gpid, ipid, wpid;
-    int status, savedErrno;
+    childProcNum = N;
+    int sigCnt;
+    int chld_status;
 
+    /**
+     * @note sa, blockMask, emptyMask : signal handler 속성 변경 변수
+    */
+    sigset_t blockMask, emptyMask;
+    struct sigaction sa;
+
+    /**
+     * @note installing signal hanlder
+    */
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sa.sa_handler = sigchldHandler;
+    if(sigaction(SIGCHLD, &sa, NULL) == -1)
+    {
+        perror("sigaction");
+        exit(EXIT_FAILURE);
+    }
+    
+    /*
+    if(signal(SIGCHLD, sigchldHandler) == SIG_ERR)
+    {
+        perror("signal");
+        exit(EXIT_FAILURE);
+    }
+    */
     printf("메인 함수입니다.\n");
 
     //1. fork() : system server process 
@@ -28,12 +103,21 @@ int main()
     //4. fork() : gui process 
     printf("\nGUI를 생성합니다.\n");
     gpid = create_gui();
-
+/*
     //5. wait() : fork()로 생성한 process의 정상 종료 확인
-    waitpid(spid, &status, 0);
-    waitpid(gpid, &status, 0);
-    waitpid(ipid, &status, 0);
-    waitpid(wpid, &status, 0);
+    waitpid(spid, &chld_status, 0);
+    waitpid(gpid, &chld_status, 0);
+    waitpid(ipid, &chld_status, 0);
+    waitpid(wpid, &chld_status, 0);
+*/
+    
+    /**
+     * @note wait for SIGCHLD until all children are dead 
+    */
+    while(childProcNum > 0)
+    {
+        sleep(1);
+    }
 
     return 0;
 }

@@ -24,7 +24,10 @@ int gui_server()
     //execl() syscall -> google-chrome-stable 실행
     printf("chromium-browser start!!\n");
     //execl("/usr/bin/google-chrome-stable", "google-chrome-stable", "http://localhost:8282", NULL);    
-    execl("/usr/bin/chromium-browser", "chromium-browser", "http://localhost:8282", NULL);    
+    if(execl("/usr/bin/chromium-browser", "chromium-browser", "http://localhost:8282", NULL))
+    {
+        printf("execfailed\n");
+    }    
     return 0; 
 }
 
@@ -48,12 +51,12 @@ int create_gui()
     
     if((guiPid = fork()) == 0)           
     {
-        printf("child process!,  PID : %d\n", getpid());
+        printf("child(Gui Server) process!,  PID : %d\n", getpid());
         
         ////Gui server process 동작 시작  
         gui_server();  
 
-        exit(EXIT_SUCCESS);                        
+       // exit(EXIT_SUCCESS);                        
     }
 
     // parent process   

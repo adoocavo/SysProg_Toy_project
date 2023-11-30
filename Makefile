@@ -2,6 +2,7 @@
 DIRs = system \
 	ui \
 	web_server \
+	project_libs \
 
 BUILD_DIRs = ${DIRs}
 
@@ -13,13 +14,15 @@ OBJs = ./system/system_server.o\
 	 ./ui/gui.o \
 	 ./ui/input.o \
 	 ./web_server/web_server.o \
+	 ./project_libs/time/currTime.o \
 	 main.o
 
 INCs = ./system/system_server.h \
 	./ui/gui.h \
 	./ui/input.h \
-	./web_server/web_server.h
-
+	./web_server/web_server.h \
+	./project_libs/time/currTime.h
+	
 SRCs = main.c
 
 #2. targets
