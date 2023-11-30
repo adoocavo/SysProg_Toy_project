@@ -20,7 +20,7 @@
 static volatile int childProcNum;
 
 /**************** SIGCHLD : non-blocking handler ****************/
-static void sigchldHandler(int sig)
+static void sigchld_handler(int sig)
 {
     printf("%s handler: Caught SIGCHLD\n", currTime("%T"));
 
@@ -72,7 +72,7 @@ int main()
     */
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
-    sa.sa_handler = sigchldHandler;
+    sa.sa_handler = sigchld_handler;
     if(sigaction(SIGCHLD, &sa, NULL) == -1)
     {
         perror("sigaction");

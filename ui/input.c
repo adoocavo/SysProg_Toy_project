@@ -66,17 +66,23 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext)
 }
 
 /******************************** SIGSEGV : handler ********************************/
-
-
-
-
 int input_server()
 {
     printf("나 input 프로세스!\n");
     struct sigaction sa;
    
-    memset(&sa, 0, sizeof(sigaction));
-    sigemptyset(&sa.sa_mask);
+    /**
+     * @note struct sigaction field
+     *  1. sa_mask : 시그널 핸들러가 동작 중 블록되는 시그널 집합
+     *  2. sa_flags : 시그널이 처리되는 방식 설정(flag option 설정)
+     *  3_1. sa_sigaction : 확장된 signal handler func 지정
+     *  3_2. sa_handler : 일반 signal handler func 지정
+     * => 3_1, 3_2 중 하나만 사용
+     *  
+    */
+
+    memset(&sa, 0, sizeof(sigaction));      //sigaction struct sa 초기화 
+    sigemptyset(&sa.sa_mask);               //sigaction mask set 초기화
 
     sa.sa_flags = SA_RESTART | SA_SIGINFO;
     sa.sa_sigaction = segfault_handler;

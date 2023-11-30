@@ -7,6 +7,11 @@
         "system_server.h": "c",
         "web_server.h": "c",
         "wait.h": "c",
-        "gui.h": "c"
+        "gui.h": "c",
+        "time.h": "c",
+        "sigevent-consts.h": "c",
+        "time_t.h": "c",
+        "timesize.h": "c",
+        "signal.h": "c"
     }
 }
