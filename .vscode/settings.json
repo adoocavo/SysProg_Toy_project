@@ -5,6 +5,8 @@
         "unistd.h": "c",
         "prctl.h": "c",
         "system_server.h": "c",
-        "web_server.h": "c"
+        "web_server.h": "c",
+        "wait.h": "c",
+        "gui.h": "c"
     }
 }

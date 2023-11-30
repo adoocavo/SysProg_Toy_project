@@ -10,9 +10,8 @@
 CC = gcc
 CFLAGS_c = -g -W -Wall -c
 
-SRCs = web_server.c #\
-	web_server.h         
-
+SRCs = web_server.c \
+      
 INCs = ./../system/system_server.h \
 	./../ui/gui.h \
 	./../ui/input.h \
@@ -22,7 +21,7 @@ INCs = ./../system/system_server.h \
 all : web_server.o
 	
 
-system_server.o : ${SRCs} ${INCs}
+web_server.o : ${SRCs} ${INCs}
 	${CC} ${CFLAGS_c} web_server.o ${SRCs}
 
 #3. clean

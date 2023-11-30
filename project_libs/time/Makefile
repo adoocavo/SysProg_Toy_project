@@ -10,28 +10,21 @@
 CC = gcc
 CFLAGS_c = -g -W -Wall -c
 
-SRC1 = gui.c \
+SRCs = currTime.c \
+       
 
-SRC2 = input.c \
-
-INCs = ./../system/system_server.h \
-	gui.h \
-	input.h \
-	./../web_server/web_server.h
+INCs = currTime.h \
 
 #2. targets
-all : gui.o input.o
+all : currTime.o
+	
 
-gui.o : ${SRC1} ${INCs}
-	${CC} ${CFLAGS_c} gui.o ${SRC1}
-
-input.o : ${SRC2} ${INCs}
-	${CC} ${CFLAGS_c} input.o ${SRC2}
-
+web_server.o : ${SRCs} ${INCs}
+	${CC} ${CFLAGS_c} currTime.o ${SRCs}
 
 #3. clean
 clean :
-	rm -rf gui.o input.o
+	rm -rf currTime.o
 
 
  

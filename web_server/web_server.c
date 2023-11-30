@@ -22,15 +22,20 @@ int web_server()
 
     //execl() syscall -> filebrowser 실행
     printf("filebrowser start!!\n");
-    execl("/usr/local/bin/filebrowser", "filebrowser", "-p", "8282", (char *)NULL);
+    if(execl("/usr/local/bin/filebrowser", "filebrowser", "-p", "8282", (char *)NULL))
+    {
+        perror("execl");
+        //printf("execfailed\n");
+    }
+
+    while(1)
+    {
+        sleep(1);            
+    }
     
     return 0; 
 
 }
-
-
-
-
 
 /** feature : Web server process 생성 
  * @param {void} 
@@ -52,13 +57,15 @@ int create_web_server()
 
     if((webPid = fork()) == 0)           
     {
-        printf("child process!,  PID : %d\n", getpid());
+        printf("child(Web Server) process!,  PID : %d\n", getpid());
         
         ////Web server process 동작 시작  
         web_server();  
 
-        exit(EXIT_SUCCESS);         
+        //exit(EXIT_SUCCESS);         
     }
+
+    else if(webPid == -1) perror("fork");
 
     // parent process   
     else                                    
@@ -97,11 +104,7 @@ int create_web_server()
            }
         }
         */
-
     }
-
-
     
-
     return 0;
 }

@@ -17,15 +17,14 @@
 */
 int system_server()
 {
-    printf("system_server process start!!\n");
+    printf("나 system_server 프로세스!\n");
+    //printf("system_server process start!!\n");
 
-    
     while (1) 
     {
         sleep(1);
     }
     
-
     return 0;
 }
 
@@ -47,17 +46,22 @@ int create_system_server()
      *              parent : system server process 생성 후 wait
     */ 
     // child process
-    printf("여기서 system 프로세스를 생성합니다.\n");   
+    printf("여기서 system_server 프로세스를 생성합니다.\n");   
     if((systemPid = fork()) == 0)           
     {
-        printf("child process!,  PID : %d\n", getpid());
+        printf("child(system_server) process!,  PID : %d\n", getpid());
+        
+        
+        if(prctl(PR_SET_NAME, (unsigned long) name) < 0) perror("prctl()");
         
         ////system server process 동작 시작  
         system_server();     
 
-        exit(EXIT_SUCCESS);                    
+        //exit(EXIT_SUCCESS);                    
     }
 
+    else if(systemPid == -1) perror("fork");
+    
     // parent process   
     else                                    
     {

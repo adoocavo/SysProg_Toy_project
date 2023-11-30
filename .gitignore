@@ -1,2 +1,5 @@
-#db file
+#db files
 *.db
+
+#obj files
+*.o
