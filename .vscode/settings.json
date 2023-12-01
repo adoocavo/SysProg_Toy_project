@@ -12,6 +12,8 @@
         "sigevent-consts.h": "c",
         "time_t.h": "c",
         "timesize.h": "c",
-        "signal.h": "c"
+        "signal.h": "c",
+        "assert.h": "c",
+        "execinfo.h": "c"
     }
 }

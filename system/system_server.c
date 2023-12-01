@@ -7,8 +7,8 @@
 #include <time.h>
 #include <signal.h>
 #include <unistd.h>
-//#include <bits/sigevent-consts.h>    //for SIGEV_SIGNAL
-//#include <bits/sigaction.h>
+#include <pthread.h>
+#include <assert.h>
 
 #include "system_server.h"
 #include "./../ui/gui.h"
@@ -17,9 +17,9 @@
 #include "./../project_libs/time/currTime.h"
 
 #define TIMER_SIG SIGRTMAX      //POSIX RTS 사용
+#define NUM_OF_THREADS 4
 
-
-/** feature : main process가 생성한 모든 process monitoring 
+/** feature : timer set + create 
  * @param {long} initial_sec, initial_usec, interval_sec, interval_usec
  * @return {void} 
  * @todo  posix timer set + create (by using timer_create() and timer_create())
@@ -28,7 +28,7 @@ void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_
 {
     timer_t *tidlist;
 
-    //1. sigevent struct 설정 for timer_create() + timer_create()
+    //1. sigevent struct 설정 for timer_create() 
     struct sigevent   sev;    
     sev.sigev_notify = SIGEV_SIGNAL;
     sev.sigev_signo = TIMER_SIG;
@@ -36,7 +36,7 @@ void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_
     if(timer_create(CLOCK_REALTIME, &sev, &tidlist[0]) == -1)  perror("timer_create");
 
 
-    //2. itimerspec struct 설정 for timer_settime() + timer_settime()
+    //2. itimerspec struct 설정 for timer_settime() 
     struct itimerspec ts;
 
     //2_1. timer 시간 간격, 초기값 설정
@@ -52,8 +52,6 @@ void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_
     if(timer_settime(tidlist[0], 0, &ts, NULL) == -1)  perror("timer_settime");
 
 }
-
-
 
 
 /**
@@ -85,17 +83,38 @@ static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 
     tidptr = si->si_value.sival_ptr;
 
-    /* UNSAFE: This handler uses non-async-signal-safe functions
-       (printf(); see Section 21.1.2) */
-
     printf("[%s] Got signal %d : %d번째 alarm \n", currTime("%T"), sig, toy_timer);
-    
-    //printf("    *sival_ptr         = %ld\n", (long) *tidptr);
-    //printf("    timer_getoverrun() = %d\n", timer_getoverrun(*tidptr));
 
 }
 
 
+/** feature : thread_func  
+ * 
+*/
+void * watchdog_thread_func(void *);
+void * monitor_thread_func(void *);
+void * disk_service_thread_func(void *);
+void * camera_service_thread_func(void *);
+
+/** thread_func array 
+ * 
+*/
+void * (*thread_funcs[NUM_OF_THREADS]) (void *) = {
+    watchdog_thread_func,
+    monitor_thread_func,
+    disk_service_thread_func,
+    camera_service_thread_func
+};
+
+/** threads_name ary
+ * 
+*/
+char* threads_name[NUM_OF_THREADS] = {
+    "watchdog_thread",
+    "monitor_thread",
+    "disk_service_thread",
+    "camera_service_thread"
+};
 
 /** feature : main process가 생성한 모든 process monitoring 
  * @param {void} 
@@ -104,14 +123,14 @@ static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 */
 int system_server()
 {
-//    struct itimerspec ts;
     struct sigaction  sa;
-//    struct sigevent   sev;
     timer_t *tidlist;
 
     printf("나 system_server 프로세스!\n");
     
-    /* 5초 타이머를 만들어 봅시다. */
+    /****************************************************************************************************/
+    /******************* 5초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
+    /****************************************************************************************************/
 
     //1. sig hanlder 등록(TIMER_SIG)
     memset(&sa, 0, sizeof(sigaction));
@@ -123,11 +142,46 @@ int system_server()
     if(sigaction(TIMER_SIG, &sa, NULL) == -1)   perror("sigaction");
 
     //2. set + create timer
-    set_create_peridicTimer(5, 0, 5, 0);
+    //set_create_peridicTimer(5, 0, 5, 0);
+    /****************************************************************************************************/
+    /******************* 5초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
+    /****************************************************************************************************/
+
+
+
+    /****************************************************************************************************/
+    /******************* watchdog, monitor, disk_serviced, camera_service threads 생성 *******************/
+    /****************************************************************************************************/
+    //1. thread 초기 설정 - pthread_t, pthread_attr_t
+
+    //1_1. pthread var 선언
+    ///=> idx 0~3 순서로 watchdog, monitor, disk_serviced, camera_service threads 
+    pthread_t tids[NUM_OF_THREADS];               //thread id
+    pthread_attr_t attrs[NUM_OF_THREADS];         //thread attributes object
+
+ 
+    //1_2. attr 설정
+    for(int i = 0; i < NUM_OF_THREADS; ++i) 
+    {
+        //1. assign default values
+        if(pthread_attr_init(&attrs[i])) perror("pthread_attr_init");
+
+        //2. set detached 
+        if(pthread_attr_setdetachstate(&attrs[i], PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate");
+    }    
+
+
+    //2. thread 생성 - pthread_create()
+    for(int i = 0; i < NUM_OF_THREADS; ++i) 
+    {
+        if(pthread_create(&tids[i], &attrs[i], thread_funcs[i], (void *)threads_name[i])) perror("pthread_create");
+    }
+    /****************************************************************************************************/
+    /******************* watchdog, monitor, disk_serviced, camera_service threads 생성 *******************/
+    /****************************************************************************************************/
 
     printf("system init done.  waiting...");
-
-    while (1) 
+    while(1) 
     {
         sleep(5);
         //posix_sleep_ms(5000);
@@ -164,8 +218,6 @@ int create_system_server()
         
         ////system server process 동작 시작  
         system_server();     
-
-        //exit(EXIT_SUCCESS);                    
     }
 
     else if(systemPid == -1) perror("fork");
@@ -178,39 +230,78 @@ int create_system_server()
 
         printf("parent process!,  PID : %d\n", getpid());
         
-        //1. caller에서 새로 생성한 자식 process wait 처리
         return systemPid;
-
-        /*2. callee에서  새로 생성한 자식 process wait 처리 -> sighandler 등록 필요??
-        //1. system server process 정상 종료 확인 전까지 wait
-        child_wPid = waitpid(systemPid, &childStatus, 0);
-       
-        //1-1. waitpid return 확인
-        if(child_wPid == -1)     
-        {
-            perror("error in waitpid()\n");
-        }
-
-        else    
-        {
-           //1-2. child terminated status 확인
-           if(WIFEXITED(childStatus)) 
-           {
-                printf("child proces(PID : %d) terminated with exit status %d\n", child_wPid, WEXITSTATUS(childStatus));
-           }
-
-           else 
-           {
-                printf("child proces(PID : %d) terminated abnormally\n", child_wPid);
-           }
-        }
-        */
 
     }
 
     return 0;
 }
 
+
+
+/** feature : watchdog_thread_func definition 
+ * 
+*/
+void * watchdog_thread_func(void *arg)
+{  
+    char *str = arg;
+    printf("나 %s\n", str);
+
+    while(1)
+    {
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+/** feature : monitor_thread_func definition 
+ * 
+*/
+void * monitor_thread_func(void *arg)
+{  
+    char *str = arg;
+    printf("나 %s\n", str);
+
+    while(1)
+    {
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+/** feature : disk_service_thread_func definition 
+ * 
+*/
+void * disk_service_thread_func(void *arg)
+{  
+    char *str = arg;
+    printf("나 %s\n", str);
+
+    while(1)
+    {
+        sleep(1);
+    }
+
+    return NULL;
+}
+
+/** feature : camera_service_thread_func definition 
+ * 
+*/
+void * camera_service_thread_func(void *arg)
+{  
+    char *str = arg;
+    printf("나 %s\n", str);
+
+    while(1)
+    {
+        sleep(1);
+    }
+
+    return NULL;
+}
 
 
 
