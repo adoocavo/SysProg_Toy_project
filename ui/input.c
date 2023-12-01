@@ -9,15 +9,19 @@
 #include <execinfo.h>
 #include <signal.h>
 #include <errno.h>
+#include <assert.h>
+#include <pthread.h>
 
 #include "./../system/system_server.h"
 #include "gui.h"
 #include "input.h"
 #include "./../web_server/web_server.h"
 
+#define TOY_TOK_BUFSIZE 64
+#define TOY_TOK_DELIM " \t\r\n\a"
+
 
 /******************************** SIGSEGV : handler ********************************/
-
 typedef struct _sig_ucontext
  {
     unsigned long uc_flags;
@@ -64,13 +68,198 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext)
 
   exit(EXIT_FAILURE);
 }
-
 /******************************** SIGSEGV : handler ********************************/
+
+
+
+/******************************** command thread, sensor thread func ********************************/
+
+/* feature : sensor thread
+ *  
+ */
+void *sensor_thread(void* arg)
+{
+    char *s = arg;
+
+    printf("%s", s);
+
+    while (1) {
+        //posix_sleep_ms(5000);
+        sleep(5);
+    }
+
+    return 0;
+}
+
+/* feature : command thread
+ * 
+ */
+int toy_send(char **args);
+int toy_shell(char **args);
+int toy_exit(char **args);
+
+char *builtin_str[] = {
+    "send",
+    "sh",
+    "exit"
+};
+
+int (*builtin_func[]) (char **) = {
+    &toy_send,
+    &toy_shell,
+    &toy_exit
+};
+
+int toy_num_builtins()
+{
+    return sizeof(builtin_str) / sizeof(char *);
+}
+
+int toy_send(char **args)
+{
+    printf("send message: %s\n", args[1]);
+
+    return 1;
+}
+
+int toy_exit(char **args)
+{
+    return 0;
+}
+
+int toy_shell(char **args)
+{
+    pid_t pid;
+    int status;
+
+    pid = fork();
+    if (pid == 0) {
+        if (execvp(args[0], args) == -1) {
+            perror("toy");
+        }
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        perror("toy");
+    } else
+{
+        do
+        {
+            waitpid(pid, &status, WUNTRACED);
+        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
+
+    return 1;
+}
+
+int toy_execute(char **args)
+{
+    int i;
+
+    if (args[0] == NULL) {
+        return 1;
+    }
+
+    for (i = 0; i < toy_num_builtins(); i++) {
+        if (strcmp(args[0], builtin_str[i]) == 0) {
+            return (*builtin_func[i])(args);
+        }
+    }
+
+    return 1;
+}
+
+char *toy_read_line(void)
+{
+    char *line = NULL;
+    ssize_t bufsize = 0;
+
+    if (getline(&line, &bufsize, stdin) == -1) {
+        if (feof(stdin)) {
+            exit(EXIT_SUCCESS);
+        } else {
+            perror(": getline\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    return line;
+}
+
+char **toy_split_line(char *line)
+{
+    int bufsize = TOY_TOK_BUFSIZE, position = 0;
+    char **tokens = malloc(bufsize * sizeof(char *));
+    char *token, **tokens_backup;
+
+    if (!tokens) {
+        fprintf(stderr, "toy: allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+
+    token = strtok(line, TOY_TOK_DELIM);
+    while (token != NULL) {
+        tokens[position] = token;
+        position++;
+
+        if (position >= bufsize) {
+            bufsize += TOY_TOK_BUFSIZE;
+            tokens_backup = tokens;
+            tokens = realloc(tokens, bufsize * sizeof(char *));
+            if (!tokens) {
+                free(tokens_backup);
+                fprintf(stderr, "toy: allocation error\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        token = strtok(NULL, TOY_TOK_DELIM);
+    }
+    tokens[position] = NULL;
+    return tokens;
+}
+
+void toy_loop(void)
+{
+    char *line;
+    char **args;
+    int status;
+
+    do {
+        printf("TOY>");
+        line = toy_read_line();
+        args = toy_split_line(line);
+        status = toy_execute(args);
+
+        free(line);
+        free(args);
+    } while (status);
+}
+
+void *command_thread(void* arg)
+{
+    char *s = arg;
+
+    printf("%s", s);
+
+    toy_loop();
+
+    return 0;
+}
+
+/******************************** command thread, sensor thread func ********************************/
+
+
+
+
+
+
 int input_server()
 {
     printf("나 input 프로세스!\n");
-    struct sigaction sa;
-   
+
+
+    /****************************************************************************************************/
+    /************************************ SIGSEGV handler 등록 *******************************************/
+    /****************************************************************************************************/
     /**
      * @note struct sigaction field
      *  1. sa_mask : 시그널 핸들러가 동작 중 블록되는 시그널 집합
@@ -80,7 +269,7 @@ int input_server()
      * => 3_1, 3_2 중 하나만 사용
      *  
     */
-
+    struct sigaction sa;
     memset(&sa, 0, sizeof(sigaction));      //sigaction struct sa 초기화 
     sigemptyset(&sa.sa_mask);               //sigaction mask set 초기화
 
@@ -94,8 +283,35 @@ int input_server()
     {
         perror("sigaction");
         exit(EXIT_FAILURE);
-    }
+    }    
+    /****************************************************************************************************/
+    /************************************ SIGSEGV handler 등록 *******************************************/
+    /****************************************************************************************************/
+
+
+    /****************************************************************************************************/
+    /************************************ command thread, sensor thread 생성 *****************************/
+    /****************************************************************************************************/
     
+    //1. pthread_t, pthread_attr_t 선언
+    pthread_t sensorTh_tid, commandTh_tid;
+    pthread_attr_t sensorTh_attr, commandTh_attr;
+
+    //2. attr 초기화 + detach 설정
+    if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");
+    if(pthread_attr_init(&commandTh_attr)) perror("pthread_attr_init : commandTh");
+
+    if(pthread_attr_setdetachstate(&sensorTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : sensorTh");
+    if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
+
+    //3. thread 생성
+    if(pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread")) perror("pthread_create : sensorTh");
+    if(pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread")) perror("pthread_create : commandTh");
+    /****************************************************************************************************/
+    /************************************ command thread, sensor thread 생성 *****************************/
+    /****************************************************************************************************/
+
+
     while (1) 
     {
         sleep(1);
@@ -111,32 +327,6 @@ int input_server()
 */
 int create_input()
 {
-    /**
-     * @note installing signal hanlder
-     * @note fork() -> signal handler 등록 정보도 공유하게 됨(child-parent간)
-    */
-    /* => child에 등록
-    struct sigaction sa;
-
-    memset(&sa, 0, sizeof(sigaction));
-    sigemptyset(&sa.sa_mask);
-
-    sa.sa_flags = SA_RESTART | SA_SIGINFO;
-    sa.sa_sigaction = segfault_handler;
-
-    if(sigaction(SIGSEGV, &sa, NULL) == -1)
-    {
-        perror("sigaction");
-        exit(EXIT_FAILURE);
-    }
-    */
-    /* => sigaction()사용
-    if(signal(SIGSEGV, segfault_handler) == SIG_ERR)
-    {
-        perror("signal");
-        exit(EXIT_FAILURE);
-    }
-    */
     pid_t inputPid;                        //local var : input server process's PID
     const char *name = "input_server";     
   
@@ -156,7 +346,6 @@ int create_input()
         //input server process 동작 시작  
         input_server();  
 
-        //exit(EXIT_SUCCESS);                        
     }
 
     else if(inputPid == -1) perror("fork");
@@ -171,33 +360,8 @@ int create_input()
         
         sleep(3);
 
-        // 1. caller에서 새로 생성한 자식 process wait 처리
-        return inputPid;
-
-        /* 2. callee에서  새로 생성한 자식 process wait 처리 -> sighandler 등록 필요??
-        //1. input server process 정상 종료 확인 전까지 wait
-        child_wPid = waitpid(inputPid, &childStatus, 0);
        
-        //1-1. waitpid return 확인
-        if(child_wPid == -1)     
-        {
-            perror("error in waitpid()\n");
-        }
-
-        else    
-        {
-           //1-2. child terminated status 확인
-           if(WIFEXITED(childStatus)) 
-           {
-                printf("child proces(PID : %d) terminated with exit status %d\n", child_wPid, WEXITSTATUS(childStatus));
-           }
-
-           else 
-           {
-                printf("child proces(PID : %d) terminated abnormally\n", child_wPid);
-           }
-        }
-        */
+        return inputPid;
 
     }
 
