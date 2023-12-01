@@ -59,7 +59,7 @@ void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_
 /**
  * @note Set nonzero on receipt of SIGALRM : SIGALRM -> toy_timer = 1;
 */
-//static int toy_timer = 0;  
+static int toy_timer = 0;  
 /*
 int posix_sleep_ms(unsigned int timeout_ms)
 {
@@ -79,6 +79,7 @@ int posix_sleep_ms(unsigned int timeout_ms)
 */
 static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 {
+    ++toy_timer;
 
     timer_t *tidptr;
 
@@ -87,9 +88,10 @@ static void timerSig_handler(int sig, siginfo_t *si, void *uc)
     /* UNSAFE: This handler uses non-async-signal-safe functions
        (printf(); see Section 21.1.2) */
 
-    printf("[%s] Got signal %d\n", currTime("%T"), sig);
-    printf("    *sival_ptr         = %ld\n", (long) *tidptr);
-    printf("    timer_getoverrun() = %d\n", timer_getoverrun(*tidptr));
+    printf("[%s] Got signal %d : %d번째 alarm \n", currTime("%T"), sig, toy_timer);
+    
+    //printf("    *sival_ptr         = %ld\n", (long) *tidptr);
+    //printf("    timer_getoverrun() = %d\n", timer_getoverrun(*tidptr));
 
 }
 
