@@ -19,9 +19,41 @@
 
 #define TOY_TOK_BUFSIZE 64
 #define TOY_TOK_DELIM " \t\r\n\a"
+#define TOY_BUFFSIZE 1024
+
+/***************************************************************************************/
+/******************************** mutex lock + cond var - start ********************************/
+/***************************************************************************************/
+
+//global var -> critical sec 형성 / race condition 발생
+static char global_message[TOY_BUFFSIZE];           
+
+/** global var : terminal 출력 가능 여부 확인
+ * @note  0 : Terminal에 output 가능, 1 : Terminal에 output write 불기
+*/
+int TOY_prompt_operation_check = 0;           
 
 
-/******************************** SIGSEGV : handler ********************************/
+//mutex var
+static pthread_mutex_t global_message_mutex = PTHREAD_MUTEX_INITIALIZER;                 
+//pthread_mutex_t TOY_prompt_mutex = PTHREAD_MUTEX_INITIALIZER; 
+
+//cond var
+static pthread_cond_t global_message_cond = PTHREAD_COND_INITIALIZER;
+//pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
+
+
+
+
+
+/***************************************************************************************/
+/******************************** mutex lock + cond var - end ********************************/
+/***************************************************************************************/
+
+
+/***********************************************************************************/
+/******************************** SIGSEGV : handler - start ********************************/
+/***********************************************************************************/
 typedef struct _sig_ucontext
  {
     unsigned long uc_flags;
@@ -68,22 +100,106 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext)
 
   exit(EXIT_FAILURE);
 }
-/******************************** SIGSEGV : handler ********************************/
+/***********************************************************************************/
+/******************************** SIGSEGV : handler - end ********************************/
+/***********************************************************************************/
 
 
+/****************************************************************************************************/
+/******************************** command thread, sensor thread func - start ********************************/
+/****************************************************************************************************/
 
-/******************************** command thread, sensor thread func ********************************/
-
+//1. 함수 선언
 /* feature : sensor thread
  *  
  */
-void *sensor_thread(void* arg)
+void *sensor_thread(void*);             //mutex
+
+
+/* feature : command thread 입력받은 cmd의 실행 함수 선언 
+ * 
+ */
+int toy_send(char* *);
+int toy_mutex(char* *);                 //mutex
+int toy_shell(char* *);
+int toy_exit(char* *);
+
+/** featute : TOY> prompt에서 입력 받아서 실행 가능한 'cmd 명/cmd 함수 명' char 포인터 / 함수 포인터 배열로 선언 
+ * 
+*/
+char *builtin_str[] = {
+    "send",
+    "mu",
+    "sh",
+    "exit"
+};
+int (*builtin_func[]) (char **) = {
+    &toy_send,
+    &toy_mutex,
+    &toy_shell,
+    &toy_exit
+};
+int toy_num_builtins(void);
+
+
+/** feature : command_thread 실행에 포함되는 funcs
+ *  @note command_thread() -> toy_loop() -> toy_read_line() -> toy_split_line() -> toy_execute()
+*/ 
+void* command_thread(void *);
+void toy_loop(void);                        //mutex
+char* toy_read_line(void);
+char** toy_split_line(char *);         
+int toy_execute(char* *);
+
+
+//2. 함수 정의 
+/* feature : sensor thread
+ *  
+ */
+void *sensor_thread(void* arg)            //mutex
 {
     char *s = arg;
-
     printf("%s", s);
 
-    while (1) {
+    int i = 0;
+    while (1) 
+    {   
+        i = 0;
+
+        /******************************** pthread_mutex_lock + cond var - start ********************************/
+        if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : sensor_thread(global_message_mutex)");
+        //if(pthread_mutex_lock(&TOY_prompt_mutex)) perror("pthread_mutex_lock : sensor_thread(TOY_prompt_mutex)");
+
+
+        //if(global_message[0] == NULL || TOY_prompt_operation_check)
+        if(global_message[0] == NULL)
+        {
+            //printf("waiting for input from toy_mutex(TOY> mu)......\n");
+            if(pthread_cond_wait(&global_message_cond, &global_message_mutex))perror("pthread_cond_wait : sensor_thread(global_message_mutex)");
+            //if(pthread_cond_wait(&TOY_prompt_cond, &TOY_prompt_mutex)) perror("pthread_cond_wait : sensor_thread(TOY_prompt_mutex)");
+
+            TOY_prompt_operation_check = 1;
+        }
+
+        while (global_message[i] != NULL)
+        {
+            printf("%c", global_message[i]);
+            fflush(stdout);
+            //posix_sleep_ms(500);
+            sleep(1);
+            i++;
+        }
+        TOY_prompt_operation_check = 0;
+
+        memset(global_message, NULL, sizeof(global_message));
+
+        if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : sensor_thread(global_message_mutex)");
+        //if(pthread_mutex_unlock(&TOY_prompt_mutex)) perror("pthread_mutex_unlock : sensor_thread(TOY_prompt_mutex)");
+
+        /******************************** pthread_mutex_lock + cond var - end ********************************/
+
+        printf("\n");
+
         //posix_sleep_ms(5000);
         sleep(5);
     }
@@ -91,30 +207,18 @@ void *sensor_thread(void* arg)
     return 0;
 }
 
-/* feature : command thread
+/** feature : TOY> prompt로 실행 가능한 명령어의 개수 return 
  * 
- */
-int toy_send(char **args);
-int toy_shell(char **args);
-int toy_exit(char **args);
-
-char *builtin_str[] = {
-    "send",
-    "sh",
-    "exit"
-};
-
-int (*builtin_func[]) (char **) = {
-    &toy_send,
-    &toy_shell,
-    &toy_exit
-};
-
+*/
 int toy_num_builtins()
 {
     return sizeof(builtin_str) / sizeof(char *);
 }
 
+/** feature : toy_send
+ *  @note 'TOY> send' 입력시 실행동작 정의
+ *  @note  TOY> send <string>
+*/
 int toy_send(char **args)
 {
     printf("send message: %s\n", args[1]);
@@ -122,45 +226,96 @@ int toy_send(char **args)
     return 1;
 }
 
+/** feature : toy_mutex
+ *  @note 'TOY> mu' 입력시 실행동작 정의
+ *  @note  TOY> mu <string>
+*/
+int toy_mutex(char **args)                //mutex
+{
+    if (args[1] == NULL) 
+    {
+        return 1;
+    }
+
+    printf("save message: %s\n", args[1]);
+    
+    /******************************** pthread_mutex_lock - start ********************************/
+    if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_mutex");
+
+    // 여기서 뮤텍스
+    strcpy(global_message, args[1]);
+
+    //printf("global_message : %s\n", global_message);
+
+    if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_mutex");
+    if(pthread_cond_signal(&global_message_cond))  perror("pthread_cond_signal : toy_mutex");
+    /******************************** pthread_mutex_lock - end ********************************/
+
+    sleep(3);
+    return 1;
+}
+
+/** feature : toy_exit
+ *  @note 'TOY> exit' 입력시 실행동작 정의
+*/
 int toy_exit(char **args)
 {
     return 0;
 }
 
+/** feature : toy_shell
+ *  @note 'TOY> sh' 입력시 실행동작 정의
+*/
 int toy_shell(char **args)
 {
     pid_t pid;
     int status;
 
     pid = fork();
-    if (pid == 0) {
-        if (execvp(args[0], args) == -1) {
+    if (pid == 0) 
+    {
+        if (execvp(args[0], args) == -1)
+        {
             perror("toy");
         }
         exit(EXIT_FAILURE);
-    } else if (pid < 0) {
+    } 
+   
+    else if (pid < 0) 
+    {
         perror("toy");
-    } else
-{
+    }
+   
+    else
+    {
         do
         {
             waitpid(pid, &status, WUNTRACED);
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        } 
+        while (!WIFEXITED(status) && !WIFSIGNALED(status));
     }
 
     return 1;
 }
 
+
+/** feature : toy_execute 
+ * @note 입력받은 명령어에 대한 함수 실행 
+ * @note args[0]에 실행할 명령어 저장되어있음 => builtin_str[i]과 비교 후, 함수 포인터 배열(LookUp ary)사용해서 call 
+*/
 int toy_execute(char **args)
 {
     int i;
 
-    if (args[0] == NULL) {
+    if (args[0] == NULL)
+    {
         return 1;
     }
 
-    for (i = 0; i < toy_num_builtins(); i++) {
-        if (strcmp(args[0], builtin_str[i]) == 0) {
+    for (i = 0; i < toy_num_builtins(); i++)
+    {
+        if (strcmp(args[0], builtin_str[i]) == 0) 
+        {
             return (*builtin_func[i])(args);
         }
     }
@@ -168,15 +323,22 @@ int toy_execute(char **args)
     return 1;
 }
 
-char *toy_read_line(void)
+/** feature : toy_read_line 
+ * @note TOY> prompt로부터 line 단위 입력 받기 -> line에 저장 
+*/
+char* toy_read_line(void)
 {
     char *line = NULL;
     ssize_t bufsize = 0;
 
-    if (getline(&line, &bufsize, stdin) == -1) {
-        if (feof(stdin)) {
+    if (getline(&line, &bufsize, stdin) == -1) 
+    {
+        if (feof(stdin))
+        {
             exit(EXIT_SUCCESS);
-        } else {
+        } 
+        else
+        {
             perror(": getline\n");
             exit(EXIT_FAILURE);
         }
@@ -184,27 +346,36 @@ char *toy_read_line(void)
     return line;
 }
 
-char **toy_split_line(char *line)
+/** feature : toy_split_line 
+ * @note char* *tokens = malloc(bufsize * sizeof(char *) =>  char* tokens[bufsize] => char* type의 data를 bufsize개수만큼~ 
+ * @note 입력받은 문자열 split -> tokens 배열에 저장
+*/
+char** toy_split_line(char *line)
 {
     int bufsize = TOY_TOK_BUFSIZE, position = 0;
-    char **tokens = malloc(bufsize * sizeof(char *));
+    char* *tokens = (char*)malloc(bufsize * sizeof(char *));
     char *token, **tokens_backup;
 
-    if (!tokens) {
+    if (!tokens) 
+    {
         fprintf(stderr, "toy: allocation error\n");
         exit(EXIT_FAILURE);
     }
 
     token = strtok(line, TOY_TOK_DELIM);
-    while (token != NULL) {
+    while (token != NULL) 
+    {
         tokens[position] = token;
         position++;
 
-        if (position >= bufsize) {
+        if (position >= bufsize) 
+        {
             bufsize += TOY_TOK_BUFSIZE;
             tokens_backup = tokens;
             tokens = realloc(tokens, bufsize * sizeof(char *));
-            if (!tokens) {
+            
+            if (!tokens)
+            {
                 free(tokens_backup);
                 fprintf(stderr, "toy: allocation error\n");
                 exit(EXIT_FAILURE);
@@ -217,24 +388,52 @@ char **toy_split_line(char *line)
     return tokens;
 }
 
-void toy_loop(void)
+
+/** feature : toy_loop 
+ * @note toy_read_line() -> toy_split_line() -> toy_execute() 호출
+*/
+void toy_loop(void)                       //mutex
 {
     char *line;
-    char **args;
+    char* *args;
     int status;
 
-    do {
+   // if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_loop");
+    do 
+    {
+        // 여기는 그냥 중간에 "TOY>"가 출력되는거 보기 싫어서.. 뮤텍스
+        if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_loop(global_message_mutex)");
+        //if(pthread_mutex_lock(&TOY_prompt_mutex)) perror("pthread_mutex_lock : toy_loop(TOY_prompt_mutex)");
+        
+        while(TOY_prompt_operation_check)
+        {
+            sleep(1);
+        }
+        
+        //TOY_prompt_operation_check = 1;
         printf("TOY>");
+        //TOY_prompt_operation_check = 0;
+
+        if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_loop(global_message_mutex)");
+        //if(pthread_mutex_unlock(&TOY_prompt_mutex)) perror("pthread_mutex_unlock : toy_loop(TOY_prompt_mutex)");
+
         line = toy_read_line();
         args = toy_split_line(line);
         status = toy_execute(args);
 
         free(line);
         free(args);
-    } while (status);
+    } 
+    while (status);
+
+    //if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_loop"); //=> 이갓때문에 deadlock
+
 }
 
-void *command_thread(void* arg)
+/** feature : command_thread
+ * @note toy_loop() 호출
+*/
+void* command_thread(void* arg)
 {
     char *s = arg;
 
@@ -244,8 +443,9 @@ void *command_thread(void* arg)
 
     return 0;
 }
-
-/******************************** command thread, sensor thread func ********************************/
+/****************************************************************************************************/
+/******************************** command thread, sensor thread func - end ********************************/
+/****************************************************************************************************/
 
 
 
@@ -296,6 +496,7 @@ int input_server()
     //1. pthread_t, pthread_attr_t 선언
     pthread_t sensorTh_tid, commandTh_tid;
     pthread_attr_t sensorTh_attr, commandTh_attr;
+    int retcode;
 
     //2. attr 초기화 + detach 설정
     if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");
@@ -305,8 +506,12 @@ int input_server()
     if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
 
     //3. thread 생성
-    if(pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread")) perror("pthread_create : sensorTh");
-    if(pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread")) perror("pthread_create : commandTh");
+    if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
+    assert(retcode == 0);
+
+    if((retcode = pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread\n"))) perror("pthread_create : commandTh");
+    assert(retcode == 0);
+
     /****************************************************************************************************/
     /************************************ command thread, sensor thread 생성 *****************************/
     /****************************************************************************************************/
