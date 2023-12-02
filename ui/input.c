@@ -27,15 +27,20 @@
 
 //global var -> critical sec 형성 / race condition 발생
 static char global_message[TOY_BUFFSIZE];           
-extern int TOY_prompt_operation_check;
+
+/** global var : terminal 출력 가능 여부 확인
+ * @note  0 : Terminal에 output 가능, 1 : Terminal에 output write 불기
+*/
+int TOY_prompt_operation_check = 0;           
+
 
 //mutex var
 static pthread_mutex_t global_message_mutex = PTHREAD_MUTEX_INITIALIZER;                 
-extern pthread_mutex_t TOY_prompt_mutex;
+//pthread_mutex_t TOY_prompt_mutex = PTHREAD_MUTEX_INITIALIZER; 
 
 //cond var
 static pthread_cond_t global_message_cond = PTHREAD_COND_INITIALIZER;
-extern pthread_cond_t TOY_prompt_cond;
+//pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
 
 
 
@@ -141,7 +146,7 @@ int toy_num_builtins(void);
  *  @note command_thread() -> toy_loop() -> toy_read_line() -> toy_split_line() -> toy_execute()
 */ 
 void* command_thread(void *);
-void toy_loop(void);                    //mutex
+void toy_loop(void);                        //mutex
 char* toy_read_line(void);
 char** toy_split_line(char *);         
 int toy_execute(char* *);
@@ -162,13 +167,18 @@ void *sensor_thread(void* arg)            //mutex
         i = 0;
 
         /******************************** pthread_mutex_lock + cond var - start ********************************/
-        pthread_mutex_lock(&global_message_mutex);
+        if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : sensor_thread(global_message_mutex)");
+        //if(pthread_mutex_lock(&TOY_prompt_mutex)) perror("pthread_mutex_lock : sensor_thread(TOY_prompt_mutex)");
 
+
+        //if(global_message[0] == NULL || TOY_prompt_operation_check)
         if(global_message[0] == NULL)
         {
-            printf("waiting for input from toy_mutex(TOY> mu)\n");
+            //printf("waiting for input from toy_mutex(TOY> mu)......\n");
+            if(pthread_cond_wait(&global_message_cond, &global_message_mutex))perror("pthread_cond_wait : sensor_thread(global_message_mutex)");
+            //if(pthread_cond_wait(&TOY_prompt_cond, &TOY_prompt_mutex)) perror("pthread_cond_wait : sensor_thread(TOY_prompt_mutex)");
 
-            pthread_cond_wait(&global_message_cond, &global_message_mutex);
+            TOY_prompt_operation_check = 1;
         }
 
         while (global_message[i] != NULL)
@@ -179,12 +189,16 @@ void *sensor_thread(void* arg)            //mutex
             sleep(1);
             i++;
         }
+        TOY_prompt_operation_check = 0;
 
         memset(global_message, NULL, sizeof(global_message));
 
-        pthread_mutex_unlock(&global_message_mutex);
+        if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : sensor_thread(global_message_mutex)");
+        //if(pthread_mutex_unlock(&TOY_prompt_mutex)) perror("pthread_mutex_unlock : sensor_thread(TOY_prompt_mutex)");
+
         /******************************** pthread_mutex_lock + cond var - end ********************************/
 
+        printf("\n");
 
         //posix_sleep_ms(5000);
         sleep(5);
@@ -226,15 +240,18 @@ int toy_mutex(char **args)                //mutex
     printf("save message: %s\n", args[1]);
     
     /******************************** pthread_mutex_lock - start ********************************/
-    pthread_mutex_lock(&global_message_mutex);
+    if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_mutex");
 
     // 여기서 뮤텍스
     strcpy(global_message, args[1]);
 
-    pthread_mutex_unlock(&global_message_mutex);
-    pthread_cond_signal(&global_message_cond);
+    //printf("global_message : %s\n", global_message);
+
+    if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_mutex");
+    if(pthread_cond_signal(&global_message_cond))  perror("pthread_cond_signal : toy_mutex");
     /******************************** pthread_mutex_lock - end ********************************/
 
+    sleep(3);
     return 1;
 }
 
@@ -381,17 +398,25 @@ void toy_loop(void)                       //mutex
     char* *args;
     int status;
 
-    //pthread_mutex_lock(&global_message_mutex);          //for deadlock 방지?
-    pthread_mutex_lock(&TOY_prompt_mutex);
+   // if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_loop");
     do 
     {
-        if(!TOY_prompt_operation_check) 
-        {   
-            printf("waiting for setting from main(TOY_prompt_operation_check = 1)\n");
-            pthread_cond_wait(&TOY_prompt_cond, &TOY_prompt_mutex);
-        }
         // 여기는 그냥 중간에 "TOY>"가 출력되는거 보기 싫어서.. 뮤텍스
+        if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_loop(global_message_mutex)");
+        //if(pthread_mutex_lock(&TOY_prompt_mutex)) perror("pthread_mutex_lock : toy_loop(TOY_prompt_mutex)");
+        
+        while(TOY_prompt_operation_check)
+        {
+            sleep(1);
+        }
+        
+        //TOY_prompt_operation_check = 1;
         printf("TOY>");
+        //TOY_prompt_operation_check = 0;
+
+        if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_loop(global_message_mutex)");
+        //if(pthread_mutex_unlock(&TOY_prompt_mutex)) perror("pthread_mutex_unlock : toy_loop(TOY_prompt_mutex)");
+
         line = toy_read_line();
         args = toy_split_line(line);
         status = toy_execute(args);
@@ -401,8 +426,7 @@ void toy_loop(void)                       //mutex
     } 
     while (status);
 
-   // pthread_mutex_unlock(&global_message_mutex);       //for deadlock 방지?
-    pthread_mutex_unlock(&TOY_prompt_mutex);
+    //if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_loop"); //=> 이갓때문에 deadlock
 
 }
 

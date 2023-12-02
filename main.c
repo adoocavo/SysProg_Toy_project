@@ -22,9 +22,11 @@
 /** global var : for TOY prompt in input.c
  * 
 */
+/*
 int TOY_prompt_operation_check = 0;
 pthread_mutex_t TOY_prompt_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
+*/
 
 /**
  * @note num of forked process
@@ -127,6 +129,7 @@ int main()
      * 
     */
     //pthread_mutex_lock(&global_message_mutex);
+    /*
     pthread_mutex_lock(&TOY_prompt_mutex);
 
     TOY_prompt_operation_check = 1;
@@ -134,7 +137,7 @@ int main()
     //pthread_mutex_unlock(&global_message_mutex);
     pthread_mutex_unlock(&TOY_prompt_mutex);
     pthread_cond_signal(&TOY_prompt_cond);
-
+    */
 
     /**
      * @note wait for SIGCHLD until all children are dead 
