@@ -26,21 +26,25 @@
 /***************************************************************************************/
 
 //global var -> critical sec 형성 / race condition 발생
-static char global_message[TOY_BUFFSIZE];           
+static char global_message[TOY_BUFFSIZE];     
+//static char global_message_for_ITC[TOY_BUFFSIZE];     
+
 
 /** global var : terminal 출력 가능 여부 확인
  * @note  0 : Terminal에 output 가능, 1 : Terminal에 output write 불기
 */
 int TOY_prompt_operation_check = 0;           
-
+//int terminal_operation_check = 0;
 
 //mutex var
 static pthread_mutex_t global_message_mutex = PTHREAD_MUTEX_INITIALIZER;                 
 //pthread_mutex_t TOY_prompt_mutex = PTHREAD_MUTEX_INITIALIZER; 
+//pthread_mutex_t terminal_operation_mutex = PTHREAD_MUTEX_INITIALIZER; 
 
 //cond var
 static pthread_cond_t global_message_cond = PTHREAD_COND_INITIALIZER;
 //pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
+//pthread_cond_t terminal_operation_cond;
 
 
 
@@ -410,6 +414,9 @@ void toy_loop(void)                       //mutex
             sleep(1);
         }
         
+        /** 수정필요 
+         * @note : 깔끔하게 순서 맞춰서 terminal 출력 
+        */
         //TOY_prompt_operation_check = 1;
         printf("TOY>");
         //TOY_prompt_operation_check = 0;
@@ -449,9 +456,64 @@ void* command_thread(void* arg)
 
 
 
+/****************************************************************************************************/
+/******************** Inter threads communication(by using message queue) - start *******************/
+/****************************************************************************************************/
+#define MAX 30
+#define NUMTHREAD 3 /* number of threads */
+
+char buffer[TOY_BUFFSIZE];               //message queue => critical sec
+int read_count = 0, write_count = 0;
+int buflen;
+
+pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t empty = PTHREAD_COND_INITIALIZER;
+int producer_count = 0, consumer_count = 0;
+
+void *toy_consumer(int *id)
+{
+    pthread_mutex_lock(&count_mutex);
+    while (consumer_count < MAX) 
+    {
+        pthread_cond_wait(&empty, &count_mutex);
+        
+        // 큐에서 하나 꺼낸다.
+        printf("                           소비자[%d]: %c\n", *id, buffer[read_count]);
+        read_count = (read_count + 1) % TOY_BUFFSIZE;
+        fflush(stdout);
+        consumer_count++;
+    }
+    pthread_mutex_unlock(&count_mutex);
+}
+
+void *toy_producer(int *id)
+{
+    //printf("\n");
+    while (producer_count < MAX) 
+    {
+        pthread_mutex_lock(&count_mutex);
+        strcpy(buffer, "");
+        buffer[write_count] = global_message[write_count % buflen];
+
+        // 큐에 추가한다.
+        printf("%d - 생산자[%d]: %c \n", producer_count, *id, buffer[write_count]);
+        fflush(stdout);
+        write_count = (write_count + 1) % TOY_BUFFSIZE;
+        producer_count++;
+        pthread_cond_signal(&empty);
+        pthread_mutex_unlock(&count_mutex);
+
+        sleep(rand() % 3);
+    }
+}
+/****************************************************************************************************/
+/******************** Inter threads communication(by using message queue) - end *********************/
+/****************************************************************************************************/
 
 
-
+/** feature : input process operation
+ * @note SIGSEGV handler 등록, command thread/sensor thread 생성
+*/
 int input_server()
 {
     printf("나 input 프로세스!\n");
@@ -488,44 +550,111 @@ int input_server()
     /************************************ SIGSEGV handler 등록 *******************************************/
     /****************************************************************************************************/
 
+    /****************************************************************************************************/
+    /************************************ input process 내에서 생성/실행 thread 선택 - start *****************/
+    /****************************************************************************************************/
+    //pthread_mutex_lock(&terminal_operation_mutex);
+    //terminal_operation_check = 1;
 
-    /****************************************************************************************************/
-    /************************************ command thread, sensor thread 생성 *****************************/
-    /****************************************************************************************************/
+    //sigsuspend();
+    kill(getpid(), SIGSTOP);
+    sleep(3);
+    int menu;
+
+    //if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : input_server(global_message_mutex)");
+    printf("intput operation mode(0 : cmd/sensoe th, 1 : ITC) : ");
+    //if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_lock : input_server(global_message_mutex)");
+
+    scanf(" %d", &menu);
+
+    /** 수정필요 
+     * @note : 아딴 방식으로 input mode를 구분할지... + 반복 입력( 깔끔하게 순서 맞춰서)
+    */
+    if(!menu)
+    {    
+        /****************************************************************************************************/
+        /************************************ command thread, sensor thread 생성 - start *****************************/
+        /****************************************************************************************************/
+        
+        //1. pthread_t, pthread_attr_t 선언
+        pthread_t sensorTh_tid, commandTh_tid;
+        pthread_attr_t sensorTh_attr, commandTh_attr;
+        int retcode;
+
+        //2. attr 초기화 + detach 설정
+        if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");
+        if(pthread_attr_init(&commandTh_attr)) perror("pthread_attr_init : commandTh");
+
+        if(pthread_attr_setdetachstate(&sensorTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : sensorTh");
+        if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
+
+        //3. thread 생성
+        if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
+        assert(retcode == 0);
+
+        if((retcode = pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread\n"))) perror("pthread_create : commandTh");
+        assert(retcode == 0);
+
+        /****************************************************************************************************/
+        /************************************ command thread, sensor thread 생성 - end*****************************/
+        /****************************************************************************************************/
+    }
+
+    else if(menu == 1)
+    {
+        /****************************************************************************************************/
+        /************************************ producer/consumer(for ITC) - start *****************************/
+        /****************************************************************************************************/
+        
+        //1. pthread_t 선언, pthread_attr_t 설정
+        pthread_t thread_producer_consumer[NUMTHREAD];
+        pthread_attr_t thread_producer_consumer_attrs[NUMTHREAD];
+        int thread_id[NUMTHREAD] = {0, 1, 2};
+
+        for(int i = 0; i < NUMTHREAD; ++i)
+        {
+            if(pthread_attr_init(&thread_producer_consumer_attrs[i])) perror("pthread_attr_init");
+            if(pthread_attr_setdetachstate(&thread_producer_consumer_attrs[i], PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate");
+        }
+
+        //2. mutex lock
+        pthread_mutex_lock(&global_message_mutex);
+
+        strcpy(global_message, "hello world!");
+        buflen = strlen(global_message);
+        
+        pthread_mutex_unlock(&global_message_mutex);
+        
+        //sleep(10);
+        //3. pthread 생성 : consumer 1, producer 2
+        pthread_create(&thread_producer_consumer[0], NULL, (void *)toy_consumer, &thread_id[0]);
+        pthread_create(&thread_producer_consumer[1], NULL, (void *)toy_producer, &thread_id[1]);
+        pthread_create(&thread_producer_consumer[2], NULL, (void *)toy_producer, &thread_id[2]);
+
+        /****************************************************************************************************/
+        /************************************ producer/consumer(for ITC) - end *****************************/
+        /****************************************************************************************************/
+    }
+    else{;}
     
-    //1. pthread_t, pthread_attr_t 선언
-    pthread_t sensorTh_tid, commandTh_tid;
-    pthread_attr_t sensorTh_attr, commandTh_attr;
-    int retcode;
-
-    //2. attr 초기화 + detach 설정
-    if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");
-    if(pthread_attr_init(&commandTh_attr)) perror("pthread_attr_init : commandTh");
-
-    if(pthread_attr_setdetachstate(&sensorTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : sensorTh");
-    if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
-
-    //3. thread 생성
-    if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
-    assert(retcode == 0);
-
-    if((retcode = pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread\n"))) perror("pthread_create : commandTh");
-    assert(retcode == 0);
-
     /****************************************************************************************************/
-    /************************************ command thread, sensor thread 생성 *****************************/
+    /************************************ input process 내에서 생성/실행 thread 선택 - end *******************/
     /****************************************************************************************************/
+
+    //terminal_operation_check = 0;
+    //pthread_mutex_unlock(&terminal_operation_mutex);
+
 
 
     while (1) 
     {
         sleep(1);
     }
-    
+
     return 0;
 }
 
-/** feature : input server process 생성 
+/** feature : input server process 생성(by fork())
  * @param {void} 
  * @return {int} 0
  * @todo 해당 함수 내부에서 parent process의 흐름이 멈추지 않고, child process 종료를 확인하도롣 구현 (by sig handler)

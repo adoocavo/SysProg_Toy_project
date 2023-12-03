@@ -11,16 +11,22 @@ CC = gcc
 CFLAGS_c = -g -W -Wall -c
 
 SRCs = currTime.c \
-       
-
+    
 INCs = currTime.h \
+
+SYSTEM = ./../system
+UI = ./../ui
+WEB_SERVER = ./../web_server
+HAL = ./../hal
+PROJECT_LIBS = ./
+INCLUDES = -I$(SYSTEM) -I$(UI) -I$(WEB_SERVER) -I$(HAL) -I${PROJECT_LIBS}
 
 #2. targets
 all : currTime.o
 	
 
 web_server.o : ${SRCs} ${INCs}
-	${CC} ${CFLAGS_c} currTime.o ${SRCs}
+	${CC} ${INCLUDES} ${CFLAGS_c} currTime.o ${SRCs}
 
 #3. clean
 clean :

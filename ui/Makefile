@@ -14,19 +14,25 @@ SRC1 = gui.c \
 
 SRC2 = input.c \
 
-INCs = ./../system/system_server.h \
-	gui.h \
-	input.h \
-	./../web_server/web_server.h
+INC1 = gui.h 
+INC2 = input.h 
+
+SYSTEM = ./../system
+UI = ./
+WEB_SERVER = ./../web_server
+HAL = ./../hal
+PROJECT_LIBS = ./../project_libs
+INCLUDES = -I$(SYSTEM) -I$(UI) -I$(WEB_SERVER) -I$(HAL) -I${PROJECT_LIBS}
+
 
 #2. targets
 all : gui.o input.o
 
-gui.o : ${SRC1} ${INCs}
-	${CC} ${CFLAGS_c} gui.o ${SRC1}
+gui.o : ${SRC1} ${INC1}
+	${CC} ${INCLUDES} ${CFLAGS_c} gui.o ${SRC1}
 
-input.o : ${SRC2} ${INCs}
-	${CC} ${CFLAGS_c} input.o ${SRC2}
+input.o : ${SRC2} ${INC2}
+	${CC} ${INCLUDES} ${CFLAGS_c} input.o ${SRC2}
 
 
 #3. clean

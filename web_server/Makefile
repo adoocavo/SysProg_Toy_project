@@ -11,18 +11,23 @@ CC = gcc
 CFLAGS_c = -g -W -Wall -c
 
 SRCs = web_server.c \
+
+INCs = web_server.h 
+
       
-INCs = ./../system/system_server.h \
-	./../ui/gui.h \
-	./../ui/input.h \
-	web_server.h
+SYSTEM = ./../system
+UI = ./../ui
+WEB_SERVER = ./
+HAL = ./../hal
+PROJECT_LIBS = ./../project_libs
+INCLUDES = -I$(SYSTEM) -I$(UI) -I$(WEB_SERVER) -I$(HAL) -I${PROJECT_LIBS}
 
 #2. targets
 all : web_server.o
 	
 
 web_server.o : ${SRCs} ${INCs}
-	${CC} ${CFLAGS_c} web_server.o ${SRCs}
+	${CC} ${INCLUDES} ${CFLAGS_c} web_server.o ${SRCs}
 
 #3. clean
 clean :
