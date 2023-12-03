@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <assert.h>
+#include <limits.h>
 
 #include "./../hal/camera_HAL.h"
 #include "system_server.h"
@@ -71,17 +72,17 @@ int posix_sleep_ms(unsigned int timeout_ms)
 }
 */
 
-/** 
- * 
+/** feature : signal_exit
+ * @note alarm handler 종료시 log 출력하도록 alarm_log_thread에 pthread_cond_signal()
 */
 void signal_exit(void);
 
-/**
- * 
+/** feature : alarm_log_thread 수행관련 mutex 변수
+ *  
 */
 pthread_mutex_t system_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  system_loop_cond  = PTHREAD_COND_INITIALIZER;
-bool            system_loop_exit = false;    ///< true if main loop should exit
+bool            system_loop_exit = false;                     ///< true if main loop should exit
 
 /** feature : TIMER_SIG handler 
  * @param {void} 
@@ -102,7 +103,7 @@ static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 
     tidptr = si->si_value.sival_ptr;
 
-    printf("[%s] Got signal %d : %d번째 alarm \n", currTime("%T"), sig, toy_timer);
+    printf("\n[%s] Got signal %d : %d번째 alarm \n", currTime("%T"), sig, toy_timer);
 
     signal_exit();
 }
@@ -198,6 +199,7 @@ int system_server()
     //2. thread 생성 - pthread_create()
     for(int i = 0; i < NUM_OF_THREADS; ++i) 
     {
+        //if(i == 4) continue;
         if(pthread_create(&tids[i], &attrs[i], thread_funcs[i], (void *)threads_name[i])) perror("pthread_create");
     }
     /****************************************************************************************************/
@@ -228,9 +230,7 @@ int system_server()
     */
     while(1) 
     {
-        //pthread_mutex_lock(&system_loop_mutex);
         printf("main thread : busy waiting\n");
-        //pthread_mutex_lock(&system_loop_mutex);
 
         sleep(10);
         //posix_sleep_ms(5000);
@@ -323,18 +323,68 @@ void * monitor_thread_func(void *arg)
 }
 
 /** feature : disk_service_thread_func definition 
- * 
+ * @note  10초마다 disk 사용량 출력
 */
+#define POPEN_FMT "/bin/df -h ./"
+#define PCMD_BIF_SIZE 1024
+
 void * disk_service_thread_func(void *arg)
 {  
     char *str = arg;
     printf("나 %s\n", str);
+    
+    /****************************************************************************************************/
+    /******************* popen : "/bin/df -h ./" 실행 - start *******************************************/
+    /****************************************************************************************************/
+    /** featuer : popen
+     * @note popencmd : popen으로 실행할 command 저장 buffer, 
+     * @note snprintf() : popencmd에 POPEN_FMT 저장
+     * 
+     * 
+    */
+    FILE* apipe;
+    char popencmd[PCMD_BIF_SIZE];
+    snprintf(popencmd, PCMD_BIF_SIZE, POPEN_FMT);
+  
+    /* feature : popen으로 shell 실행결과 출력 저장 char ary
+     * 
+    */
+    char popen_result[PATH_MAX];
 
-    while(1)
+    int disk_check_cnt = 1;
+    int pclose_status;
+    while (1) 
     {
-//        posix_sleep_ms(5000);
-        sleep(5);
+        /* popen 사용하여 10초마다 disk 잔여량 출력
+         * popen으로 shell을 실행하면 성능과 보안 문제가 있음
+         * 향후 파일 관련 시스템 콜 시간에 개선,
+         * 하지만 가끔 빠르게 테스트 프로그램 또는 프로토 타입 시스템 작성 시 유용
+         */
+        sleep(10);
+        // posix_sleep_ms(10000);
+        printf("\n\n/********** disk 사용량 : %d 번쨰 점검 **********/ \n", disk_check_cnt);
+        if(!(apipe = popen(popencmd, "r"))) perror("popen()");
+
+        while(fgets(popen_result, PATH_MAX, apipe))
+        {
+            printf("%s", popen_result);
+        } 
+        ++disk_check_cnt;
+
+        /** feature : close file
+         * @note  shell 실행한 process(child)에 대한 resource dealloc 수행
+         * @note  이미 main.c의 waitpid()에서, shell 실행한 process(child)에 대한 resource dealloc이 이뤄짐 -> error(반환할 status 없음)
+        */
+        if((pclose_status = pclose(apipe)) == -1)  
+        {
+            printf("pclose_status : %d\n", pclose_status);
+            perror("pclose");
+        }
+        printf("/********** disk 사용량 점검 끝 **********/ \n\n");
     }
+    /****************************************************************************************************/
+    /******************* popen : "/bin/df -h ./" 실행 - end *******************************************/
+    /****************************************************************************************************/
 
     return NULL;
 }
@@ -385,8 +435,8 @@ void * alarm_log_thread_func(void *arg)
     return NULL;
 }
 
-/** feature : camera_service_thread_func definition 
- * 
+/** feature : signal_exit
+ * @note alarm handler 종료시 log 출력하도록 alarm_log_thread에 pthread_cond_signal()
 */
 void signal_exit(void)
 {
