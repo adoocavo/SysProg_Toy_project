@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <assert.h>
 
+#include "./../hal/camera_HAL.h"
 #include "system_server.h"
 #include "./../ui/gui.h"
 #include "./../ui/input.h"
@@ -17,7 +18,7 @@
 #include "./../project_libs/time/currTime.h"
 
 #define TIMER_SIG SIGRTMAX      //POSIX RTS 사용
-#define NUM_OF_THREADS 4
+#define NUM_OF_THREADS 5
 
 /** feature : timer set + create 
  * @param {long} initial_sec, initial_usec, interval_sec, interval_usec
@@ -70,6 +71,18 @@ int posix_sleep_ms(unsigned int timeout_ms)
 }
 */
 
+/** 
+ * 
+*/
+void signal_exit(void);
+
+/**
+ * 
+*/
+pthread_mutex_t system_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  system_loop_cond  = PTHREAD_COND_INITIALIZER;
+bool            system_loop_exit = false;    ///< true if main loop should exit
+
 /** feature : TIMER_SIG handler 
  * @param {void} 
  * @return {int} 0
@@ -77,6 +90,12 @@ int posix_sleep_ms(unsigned int timeout_ms)
 */
 static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 {
+    
+    /** 
+     * @note signal handler내에서는 lock 걸면 안된다 
+     *  => global var(critical sec 생성하는) 관련 r/w thread를 따로 생성해서, 해당 thread에서 수행하도록!
+     *  => signal handler는 최대한 짧게 작성
+    */
     ++toy_timer;
 
     timer_t *tidptr;
@@ -85,6 +104,7 @@ static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 
     printf("[%s] Got signal %d : %d번째 alarm \n", currTime("%T"), sig, toy_timer);
 
+    signal_exit();
 }
 
 
@@ -95,6 +115,8 @@ void * watchdog_thread_func(void *);
 void * monitor_thread_func(void *);
 void * disk_service_thread_func(void *);
 void * camera_service_thread_func(void *);
+void * alarm_log_thread_func(void *);
+
 
 /** thread_func array 
  * 
@@ -103,7 +125,8 @@ void * (*thread_funcs[NUM_OF_THREADS]) (void *) = {
     watchdog_thread_func,
     monitor_thread_func,
     disk_service_thread_func,
-    camera_service_thread_func
+    camera_service_thread_func,
+    alarm_log_thread_func
 };
 
 /** threads_name ary
@@ -113,7 +136,8 @@ char* threads_name[NUM_OF_THREADS] = {
     "watchdog_thread",
     "monitor_thread",
     "disk_service_thread",
-    "camera_service_thread"
+    "camera_service_thread",
+    "alarm_log_thread_func"
 };
 
 /** feature : main process가 생성한 모든 process monitoring 
@@ -142,7 +166,7 @@ int system_server()
     if(sigaction(TIMER_SIG, &sa, NULL) == -1)   perror("sigaction");
 
     //2. set + create timer
-    //set_create_peridicTimer(5, 0, 5, 0);
+    set_create_peridicTimer(10, 0, 10, 0);
     /****************************************************************************************************/
     /******************* 5초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
     /****************************************************************************************************/
@@ -181,9 +205,34 @@ int system_server()
     /****************************************************************************************************/
 
     printf("system init done.  waiting...");
+/*
+    // 여기에 구현하세요... 여기서 cond wait로 대기한다. 10초 후 알람이 울리면 <== system 출력
+    while(1)
+    {
+        pthread_mutex_lock(&system_loop_mutex);
+        if(system_loop_exit == false)
+        {
+            pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
+        }
+        printf(" <== system\n");
+        system_loop_exit = false;
+        pthread_mutex_unlock(&system_loop_mutex);
+    }
+*/    
+    /*
+    // 1초 마다 wake-up 
+    while (system_loop_exit == false) 
+    {
+        sleep(1);
+    }
+    */
     while(1) 
     {
-        sleep(5);
+        //pthread_mutex_lock(&system_loop_mutex);
+        printf("main thread : busy waiting\n");
+        //pthread_mutex_lock(&system_loop_mutex);
+
+        sleep(10);
         //posix_sleep_ms(5000);
     }
     
@@ -249,7 +298,8 @@ void * watchdog_thread_func(void *arg)
 
     while(1)
     {
-        sleep(1);
+//        posix_sleep_ms(5000);
+        sleep(5);
     }
 
     return NULL;
@@ -265,7 +315,8 @@ void * monitor_thread_func(void *arg)
 
     while(1)
     {
-        sleep(1);
+//        posix_sleep_ms(5000);
+        sleep(5);
     }
 
     return NULL;
@@ -281,7 +332,8 @@ void * disk_service_thread_func(void *arg)
 
     while(1)
     {
-        sleep(1);
+//        posix_sleep_ms(5000);
+        sleep(5);
     }
 
     return NULL;
@@ -295,13 +347,53 @@ void * camera_service_thread_func(void *arg)
     char *str = arg;
     printf("나 %s\n", str);
 
+    toy_camera_open();
+    toy_camera_take_picture();
+
+
     while(1)
     {
-        sleep(1);
+//        posix_sleep_ms(5000);
+        sleep(5);
     }
 
     return NULL;
 }
 
 
+/** feature : alarm_log_thread_func definition 
+ * @note alarm 올때마다 Log 찍는 기능 따로 구현
+*/
+void * alarm_log_thread_func(void *arg)
+{  
+    char *str = arg;
+    printf("나 %s\n", str);
 
+    while(1)
+    {
+        pthread_mutex_lock(&system_loop_mutex);
+
+        if(system_loop_exit == false)
+        {
+            pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
+        }
+        printf(" <== system\n");
+        system_loop_exit = false;
+        pthread_mutex_unlock(&system_loop_mutex);
+    }
+
+    return NULL;
+}
+
+/** feature : camera_service_thread_func definition 
+ * 
+*/
+void signal_exit(void)
+{
+    /* 여기에 구현하세요..  종료 메시지를 보내도록.. */
+    pthread_mutex_lock(&system_loop_mutex);
+    system_loop_exit = true;
+    pthread_mutex_unlock(&system_loop_mutex);
+    pthread_cond_signal(&system_loop_cond);
+    
+}

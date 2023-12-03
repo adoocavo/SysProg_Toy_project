@@ -19,14 +19,13 @@
 #define N 4;       
 
 
-/** global var : for TOY prompt in input.c
- * 
+/** global var : for terminal_operation_check in input.c
+ *  @note  0 : terminal에서 입력 가능, 1 : terminal에서 입력 불가
 */
-/*
-int TOY_prompt_operation_check = 0;
-pthread_mutex_t TOY_prompt_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
-*/
+//extern int terminal_operation_check;
+//extern pthread_mutex_t terminal_operation_mutex;
+//extern pthread_cond_t terminal_operation_cond;
+
 
 /**
  * @note num of forked process
@@ -93,13 +92,6 @@ int main()
         exit(EXIT_FAILURE);
     }
     
-    /*
-    if(signal(SIGCHLD, sigchldHandler) == SIG_ERR)
-    {
-        perror("signal");
-        exit(EXIT_FAILURE);
-    }
-    */
     printf("메인 함수입니다.\n");
 
     //1. fork() : system server process 
@@ -117,27 +109,10 @@ int main()
     //4. fork() : gui process 
     printf("\nGUI를 생성합니다.\n");
     gpid = create_gui();
-/*
-    //5. wait() : fork()로 생성한 process의 정상 종료 확인
-    waitpid(spid, &chld_status, 0);
-    waitpid(gpid, &chld_status, 0);
-    waitpid(ipid, &chld_status, 0);
-    waitpid(wpid, &chld_status, 0);
-*/
-    
-    /** lock() -> TOY_prompt_operation_check = 1 
-     * 
-    */
-    //pthread_mutex_lock(&global_message_mutex);
-    /*
-    pthread_mutex_lock(&TOY_prompt_mutex);
 
-    TOY_prompt_operation_check = 1;
 
-    //pthread_mutex_unlock(&global_message_mutex);
-    pthread_mutex_unlock(&TOY_prompt_mutex);
-    pthread_cond_signal(&TOY_prompt_cond);
-    */
+    //sleep(5);            // => 생성한 모든 proc의 시작 출력이 끝난 후로 변경해야함 
+    //kill(ipid, SIGCONT);
 
     /**
      * @note wait for SIGCHLD until all children are dead 

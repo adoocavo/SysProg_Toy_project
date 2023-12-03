@@ -8,29 +8,40 @@
 
 #1. Macros
 CC = gcc
-CFLAGS_c = -g -W -Wall -c
+CFLAG_c = -g -W -Wall -c
 
-SRCs = system_server.c \
+CXXLIBS = -lpthread -lm -lrt
+CXXFLAG_c = -g -W -Wall -O0 -std=c++14 -c
+CXX = g++
 
-INCs = system_server.h
-
-SYSTEM = ./
+SYSTEM = ./../system
 UI = ./../ui
 WEB_SERVER = ./../web_server
-HAL = ./../hal
+HAL = ./
 PROJECT_LIBS = ./../project_libs
 INCLUDES = -I$(SYSTEM) -I$(UI) -I$(WEB_SERVER) -I$(HAL) -I${PROJECT_LIBS}
 
-#2. targets
-all : system_server.o
-	
+SRC1 = camera_HAL.cpp \
 
-system_server.o : ${SRCs} ${INCs}
-	${CC} ${INCLUDES} ${CFLAGS_c} system_server.o ${SRCs}
+SRC2 = ControlThread.cpp \
+
+INC1 = camera_HAL.h 
+INC2 = ControlThread.h 
+
+CXX_OBJs = camera_HAL.o ControlThread.o
+
+#2 targets
+all : ${CXX_OBJs}
+
+camera_HAL.o: ${SRC1} ${INC1}
+	$(CXX) ${INCLUDES} $(CXXFLAG_c) camera_HAL.o ${SRC1}
+
+ControlThread.o: ${SRC2} ${INC2}
+	$(CXX) ${INCLUDES} $(CXXFLAG_c) ControlThread.o ${SRC2}
 
 #3. clean
 clean :
-	rm -rf system_server.o
+	rm -rf ${CXX_OBJs}
 
 
  
