@@ -14,6 +14,7 @@
         "timesize.h": "c",
         "signal.h": "c",
         "assert.h": "c",
-        "execinfo.h": "c"
+        "execinfo.h": "c",
+        "stdio.h": "c"
     }
 }

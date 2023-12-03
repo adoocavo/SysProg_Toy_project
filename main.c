@@ -18,15 +18,6 @@
 */
 #define N 4;       
 
-
-/** global var : for terminal_operation_check in input.c
- *  @note  0 : terminal에서 입력 가능, 1 : terminal에서 입력 불가
-*/
-//extern int terminal_operation_check;
-//extern pthread_mutex_t terminal_operation_mutex;
-//extern pthread_cond_t terminal_operation_cond;
-
-
 /**
  * @note num of forked process
 */

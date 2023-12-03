@@ -46,10 +46,6 @@ static pthread_cond_t global_message_cond = PTHREAD_COND_INITIALIZER;
 //pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
 //pthread_cond_t terminal_operation_cond;
 
-
-
-
-
 /***************************************************************************************/
 /******************************** mutex lock + cond var - end ********************************/
 /***************************************************************************************/
@@ -67,6 +63,9 @@ typedef struct _sig_ucontext
     sigset_t uc_sigmask;
 } sig_ucontext_t;
 
+/** feature : segfault_handler
+ * @note SIGSEGV signal을 받은 proc의 stackFrame 출력 후 종료
+*/
 void segfault_handler(int sig_num, siginfo_t * info, void * ucontext) 
 {
   void * array[50];
