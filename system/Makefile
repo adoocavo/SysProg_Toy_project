@@ -18,7 +18,7 @@ SYSTEM = ./
 UI = ./../ui
 WEB_SERVER = ./../web_server
 HAL = ./../hal
-PROJECT_LIBS = ./../project_libs
+PROJECT_LIBS = ./../project_libs     #./time까지 작성 안해도 ㄱㅊ???
 INCLUDES = -I$(SYSTEM) -I$(UI) -I$(WEB_SERVER) -I$(HAL) -I${PROJECT_LIBS}
 
 #2. targets

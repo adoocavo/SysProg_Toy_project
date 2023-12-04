@@ -57,7 +57,7 @@ int create_web_server()
 
     if((webPid = fork()) == 0)           
     {
-        printf("child(Web Server) process!,  PID : %d\n", getpid());
+        // printf("child(Web Server) process!,  PID : %d\n", getpid());
         
         ////Web server process 동작 시작  
         web_server();  
@@ -73,7 +73,7 @@ int create_web_server()
         int childStatus;                   /** local var : Web server process의 terminating 상태 저장*/
         int child_wPid;                    /** local var : Web server 기다린 이후, return되는 child Pid 저장*/
 
-        printf("parent process!,  PID : %d\n", getpid());
+        // printf("parent process!,  PID : %d\n", getpid());
         
         sleep(3);
 

@@ -11,15 +11,20 @@
 #include <errno.h>
 #include <assert.h>
 #include <pthread.h>
+#include <mqueue.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "./../system/system_server.h"
 #include "gui.h"
 #include "input.h"
 #include "./../web_server/web_server.h"
+#include "./../project_libs/toy_message.h"
 
 #define TOY_TOK_BUFSIZE 64
 #define TOY_TOK_DELIM " \t\r\n\a"
 #define TOY_BUFFSIZE 1024
+#define NUM_OF_MQ 4             //open할 message queue file 개수
 
 /***************************************************************************************/
 /******************************** mutex lock + cond var - start ********************************/
@@ -27,28 +32,55 @@
 
 //global var -> critical sec 형성 / race condition 발생
 static char global_message[TOY_BUFFSIZE];     
-//static char global_message_for_ITC[TOY_BUFFSIZE];     
-
 
 /** global var : terminal 출력 가능 여부 확인
  * @note  0 : Terminal에 output 가능, 1 : Terminal에 output write 불기
 */
-int TOY_prompt_operation_check = 0;           
-//int terminal_operation_check = 0;
+// int TOY_prompt_operation_check = 0;           
 
 //mutex var
 static pthread_mutex_t global_message_mutex = PTHREAD_MUTEX_INITIALIZER;                 
-//pthread_mutex_t TOY_prompt_mutex = PTHREAD_MUTEX_INITIALIZER; 
-//pthread_mutex_t terminal_operation_mutex = PTHREAD_MUTEX_INITIALIZER; 
 
 //cond var
 static pthread_cond_t global_message_cond = PTHREAD_COND_INITIALIZER;
-//pthread_cond_t TOY_prompt_cond = PTHREAD_COND_INITIALIZER;
-//pthread_cond_t terminal_operation_cond;
 
 /***************************************************************************************/
 /******************************** mutex lock + cond var - end ********************************/
 /***************************************************************************************/
+
+
+
+/***************************************************************************************/
+/******************************** message queue괸련 선언  - start ********************************/
+/***************************************************************************************/
+
+/** feature : system_server proc 내에서 생성되는 threads들의 msg queue mqd저장
+ * @note idx 0~4 순서대로 watchdog_mqd, monitor_mqd, disk_mqd, camera_mqd
+*/
+static mqd_t mqds[NUM_OF_MQ] = {
+            0,
+};
+
+/** featute : 생성할 message queue filename 저장 ary
+ * 
+*/
+static char *msg_queues_str[] = {
+    "/watchdog_mq",
+    "/monitor_mq",
+    "/disk_mq",
+    "/camera_mq"
+};
+
+/** feature : input command에 대한 처리 요청 후, 처리 종료여부 전달받기 위한 msg queue
+ * @note 
+*/
+static mqd_t prompt_perm_mqd = 0;
+static const char *prompt_perm_filename = NULL;
+
+/***************************************************************************************/
+/******************************** message queue괸련 선언 - end ********************************/
+/***************************************************************************************/
+
 
 
 /***********************************************************************************/
@@ -108,6 +140,8 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext)
 /***********************************************************************************/
 
 
+
+
 /****************************************************************************************************/
 /******************************** command thread, sensor thread func - start ********************************/
 /****************************************************************************************************/
@@ -126,21 +160,26 @@ int toy_send(char* *);
 int toy_mutex(char* *);                 //mutex
 int toy_shell(char* *);
 int toy_exit(char* *);
+int toy_message_queue(char* *);
+
 
 /** featute : TOY> prompt에서 입력 받아서 실행 가능한 'cmd 명/cmd 함수 명' char 포인터 / 함수 포인터 배열로 선언 
- * 
+ * @note mq <""> <"send message">
 */
 char *builtin_str[] = {
     "send",
     "mu",
     "sh",
-    "exit"
+    "exit",
+    "mq"
 };
 int (*builtin_func[]) (char **) = {
     &toy_send,
     &toy_mutex,
     &toy_shell,
-    &toy_exit
+    &toy_exit,
+    &toy_message_queue
+
 };
 int toy_num_builtins(void);
 
@@ -162,7 +201,7 @@ int toy_execute(char* *);
 void *sensor_thread(void* arg)            //mutex
 {
     char *s = arg;
-    printf("%s", s);
+    printf("나 %s", s);
 
     int i = 0;
     while (1) 
@@ -170,18 +209,14 @@ void *sensor_thread(void* arg)            //mutex
         i = 0;
 
         /******************************** pthread_mutex_lock + cond var - start ********************************/
+        
         if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : sensor_thread(global_message_mutex)");
-        //if(pthread_mutex_lock(&TOY_prompt_mutex)) perror("pthread_mutex_lock : sensor_thread(TOY_prompt_mutex)");
 
-
-        //if(global_message[0] == NULL || TOY_prompt_operation_check)
         if(global_message[0] == NULL)
         {
-            //printf("waiting for input from toy_mutex(TOY> mu)......\n");
             if(pthread_cond_wait(&global_message_cond, &global_message_mutex))perror("pthread_cond_wait : sensor_thread(global_message_mutex)");
-            //if(pthread_cond_wait(&TOY_prompt_cond, &TOY_prompt_mutex)) perror("pthread_cond_wait : sensor_thread(TOY_prompt_mutex)");
 
-            TOY_prompt_operation_check = 1;
+            // TOY_prompt_operation_check = 1;
         }
 
         while (global_message[i] != NULL)
@@ -189,19 +224,18 @@ void *sensor_thread(void* arg)            //mutex
             printf("%c", global_message[i]);
             fflush(stdout);
             //posix_sleep_ms(500);
+            
             sleep(1);
             i++;
         }
-        TOY_prompt_operation_check = 0;
+        // TOY_prompt_operation_check = 0;
 
         memset(global_message, NULL, sizeof(global_message));
 
         if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : sensor_thread(global_message_mutex)");
-        //if(pthread_mutex_unlock(&TOY_prompt_mutex)) perror("pthread_mutex_unlock : sensor_thread(TOY_prompt_mutex)");
-
-        /******************************** pthread_mutex_lock + cond var - end ********************************/
-
         printf("\n");
+        
+        /******************************** pthread_mutex_lock + cond var - end ********************************/
 
         //posix_sleep_ms(5000);
         sleep(5);
@@ -264,6 +298,38 @@ int toy_mutex(char **args)                //mutex
 int toy_exit(char **args)
 {
     return 0;
+}
+
+/** feature : toy_message_queue
+ *  @note send message to camera_serice thread in system_server.c 
+ *  @note "/camera_mq"에 write
+ *  @note mq camera <"send message">
+*/
+int toy_message_queue(char* *args)
+{
+    int mqretcode;
+    toy_msg_t msg;
+
+    if (args[1] == NULL || args[2] == NULL) 
+    {
+        return 1;
+    }
+
+    if (!strcmp(args[1], "camera")) 
+    {
+        msg.msg_type = atoi(args[2]);
+        msg.param1 = 0;
+        msg.param2 = 0;
+
+//      msg.param3 = args[3];     //메세지 전달 추가 => 포인터를 전달하는거라 error발생
+
+        mqretcode = mq_send(mqds[3], (char *)&msg, sizeof(msg), 0);       //mqds[3] : "/camera_mq"
+        assert(mqretcode == 0);
+    }
+
+    //mqretcode = mq_receive(prompt_perm_mqd, );
+
+    return 1;
 }
 
 /** feature : toy_shell
@@ -401,27 +467,21 @@ void toy_loop(void)                       //mutex
     char* *args;
     int status;
 
-   // if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_loop");
+    sleep(5);
     do 
     {
         // 여기는 그냥 중간에 "TOY>"가 출력되는거 보기 싫어서.. 뮤텍스
         if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : toy_loop(global_message_mutex)");
-        //if(pthread_mutex_lock(&TOY_prompt_mutex)) perror("pthread_mutex_lock : toy_loop(TOY_prompt_mutex)");
-        
-        while(TOY_prompt_operation_check)
-        {
-            sleep(1);
-        }
-        
+
+        sleep(1);
+
         /** 수정필요 
-         * @note : 깔끔하게 순서 맞춰서 terminal 출력 
+         * @note 깔끔하게 순서 맞춰서 terminal 출력 (현재는 sleep(5)로 대체)
+         * @note 다른 threads/proecss가 terminal의 출력작업 종료 후 "TOY>"띄우기
         */
-        //TOY_prompt_operation_check = 1;
         printf("TOY>");
-        //TOY_prompt_operation_check = 0;
 
         if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_loop(global_message_mutex)");
-        //if(pthread_mutex_unlock(&TOY_prompt_mutex)) perror("pthread_mutex_unlock : toy_loop(TOY_prompt_mutex)");
 
         line = toy_read_line();
         args = toy_split_line(line);
@@ -431,9 +491,6 @@ void toy_loop(void)                       //mutex
         free(args);
     } 
     while (status);
-
-    //if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : toy_loop"); //=> 이갓때문에 deadlock
-
 }
 
 /** feature : command_thread
@@ -443,71 +500,18 @@ void* command_thread(void* arg)
 {
     char *s = arg;
 
-    printf("%s", s);
+    printf("나 %s", s);
 
     toy_loop();
 
     return 0;
 }
+
 /****************************************************************************************************/
 /******************************** command thread, sensor thread func - end ********************************/
 /****************************************************************************************************/
 
 
-
-/****************************************************************************************************/
-/******************** Inter threads communication(by using message queue) - start *******************/
-/****************************************************************************************************/
-#define MAX 30
-#define NUMTHREAD 3 /* number of threads */
-
-char buffer[TOY_BUFFSIZE];               //message queue => critical sec
-int read_count = 0, write_count = 0;
-int buflen;
-
-pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t empty = PTHREAD_COND_INITIALIZER;
-int producer_count = 0, consumer_count = 0;
-
-void *toy_consumer(int *id)
-{
-    pthread_mutex_lock(&count_mutex);
-    while (consumer_count < MAX) 
-    {
-        pthread_cond_wait(&empty, &count_mutex);
-        
-        // 큐에서 하나 꺼낸다.
-        printf("                           소비자[%d]: %c\n", *id, buffer[read_count]);
-        read_count = (read_count + 1) % TOY_BUFFSIZE;
-        fflush(stdout);
-        consumer_count++;
-    }
-    pthread_mutex_unlock(&count_mutex);
-}
-
-void *toy_producer(int *id)
-{
-    //printf("\n");
-    while (producer_count < MAX) 
-    {
-        pthread_mutex_lock(&count_mutex);
-        strcpy(buffer, "");
-        buffer[write_count] = global_message[write_count % buflen];
-
-        // 큐에 추가한다.
-        printf("%d - 생산자[%d]: %c \n", producer_count, *id, buffer[write_count]);
-        fflush(stdout);
-        write_count = (write_count + 1) % TOY_BUFFSIZE;
-        producer_count++;
-        pthread_cond_signal(&empty);
-        pthread_mutex_unlock(&count_mutex);
-
-        sleep(rand() % 3);
-    }
-}
-/****************************************************************************************************/
-/******************** Inter threads communication(by using message queue) - end *********************/
-/****************************************************************************************************/
 
 
 /** feature : input process operation
@@ -549,106 +553,83 @@ int input_server()
     /************************************ SIGSEGV handler 등록 *******************************************/
     /****************************************************************************************************/
 
+
+    /****************************************************************************************************/
+    /************************************ message queue open - start *****************/
+    /****************************************************************************************************/
+    
+    //message queue open    
+    for(int i = 0; i < NUM_OF_MQ; ++i)
+    {
+        mqds[i] = mq_open(msg_queues_str[i], O_RDWR);
+        assert(mqds[i] != -1);
+    }
+
+    //prompt_perm_mqd = mq_open(prompt_perm_filename, O_RDONLY);
+
+
+    /****************************************************************************************************/
+    /************************************ message queue open - start *****************************/
+    /****************************************************************************************************/
+
+
     /****************************************************************************************************/
     /************************************ input process 내에서 생성/실행 thread 선택 - start *****************/
     /****************************************************************************************************/
+   
     //pthread_mutex_lock(&terminal_operation_mutex);
     //terminal_operation_check = 1;
 
     //sigsuspend();
-    kill(getpid(), SIGSTOP);
-    sleep(3);
-    int menu;
+    //kill(getpid(), SIGSTOP);
+    //sleep(3);
 
-    //if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : input_server(global_message_mutex)");
-    printf("intput operation mode(0 : cmd/sensoe th, 1 : ITC) : ");
-    //if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_lock : input_server(global_message_mutex)");
-
-    scanf(" %d", &menu);
-
-    /** 수정필요 
-     * @note : 아딴 방식으로 input mode를 구분할지... + 반복 입력( 깔끔하게 순서 맞춰서)
-    */
-    if(!menu)
-    {    
-        /****************************************************************************************************/
-        /************************************ command thread, sensor thread 생성 - start *****************************/
-        /****************************************************************************************************/
-        
-        //1. pthread_t, pthread_attr_t 선언
-        pthread_t sensorTh_tid, commandTh_tid;
-        pthread_attr_t sensorTh_attr, commandTh_attr;
-        int retcode;
-
-        //2. attr 초기화 + detach 설정
-        if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");
-        if(pthread_attr_init(&commandTh_attr)) perror("pthread_attr_init : commandTh");
-
-        if(pthread_attr_setdetachstate(&sensorTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : sensorTh");
-        if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
-
-        //3. thread 생성
-        if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
-        assert(retcode == 0);
-
-        if((retcode = pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread\n"))) perror("pthread_create : commandTh");
-        assert(retcode == 0);
-
-        /****************************************************************************************************/
-        /************************************ command thread, sensor thread 생성 - end*****************************/
-        /****************************************************************************************************/
-    }
-
-    else if(menu == 1)
-    {
-        /****************************************************************************************************/
-        /************************************ producer/consumer(for ITC) - start *****************************/
-        /****************************************************************************************************/
-        
-        //1. pthread_t 선언, pthread_attr_t 설정
-        pthread_t thread_producer_consumer[NUMTHREAD];
-        pthread_attr_t thread_producer_consumer_attrs[NUMTHREAD];
-        int thread_id[NUMTHREAD] = {0, 1, 2};
-
-        for(int i = 0; i < NUMTHREAD; ++i)
-        {
-            if(pthread_attr_init(&thread_producer_consumer_attrs[i])) perror("pthread_attr_init");
-            if(pthread_attr_setdetachstate(&thread_producer_consumer_attrs[i], PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate");
-        }
-
-        //2. mutex lock
-        pthread_mutex_lock(&global_message_mutex);
-
-        strcpy(global_message, "hello world!");
-        buflen = strlen(global_message);
-        
-        pthread_mutex_unlock(&global_message_mutex);
-        
-        //sleep(10);
-        //3. pthread 생성 : consumer 1, producer 2
-        pthread_create(&thread_producer_consumer[0], NULL, (void *)toy_consumer, &thread_id[0]);
-        pthread_create(&thread_producer_consumer[1], NULL, (void *)toy_producer, &thread_id[1]);
-        pthread_create(&thread_producer_consumer[2], NULL, (void *)toy_producer, &thread_id[2]);
-
-        /****************************************************************************************************/
-        /************************************ producer/consumer(for ITC) - end *****************************/
-        /****************************************************************************************************/
-    }
-    else{;}
+    /****************************************************************************************************/
+    /************************************ command thread, sensor thread 생성 - start *****************************/
+    /****************************************************************************************************/
     
+    //1. pthread_t, pthread_attr_t 선언
+    pthread_t sensorTh_tid, commandTh_tid;
+    pthread_attr_t sensorTh_attr, commandTh_attr;
+    int retcode;
+
+    //2. attr 초기화 + detach 설정
+    if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");
+    if(pthread_attr_init(&commandTh_attr)) perror("pthread_attr_init : commandTh");
+
+    if(pthread_attr_setdetachstate(&sensorTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : sensorTh");
+    if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
+
+    //3. thread 생성
+    if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
+    assert(retcode == 0);
+
+    if((retcode = pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread\n"))) perror("pthread_create : commandTh");
+    assert(retcode == 0);
+
     /****************************************************************************************************/
-    /************************************ input process 내에서 생성/실행 thread 선택 - end *******************/
+    /************************************ command thread, sensor thread 생성 - end*****************************/
     /****************************************************************************************************/
-
-    //terminal_operation_check = 0;
-    //pthread_mutex_unlock(&terminal_operation_mutex);
-
-
 
     while (1) 
     {
         sleep(1);
     }
+
+    /****************************************************************************************************/
+    /****************************** posix msg queue unlink (for IPC) - start *******************************/
+    /****************************************************************************************************/
+
+    //3. unlink : message queue delete
+    
+    for(int i = 0; i <  NUM_OF_MQ; ++i)
+    {
+        if(mq_unlink(msg_queues_str[i]) == -1) perror("mq_unlink");
+    }
+
+    /****************************************************************************************************/
+    /****************************** posix msg queue unlink (for IPC) - end *******************************/
+    /****************************************************************************************************/
 
     return 0;
 }
@@ -671,7 +652,7 @@ int create_input()
     printf("여기서 input 프로세스를 생성합니다.\n");   
     if((inputPid = fork()) == 0)           
     {
-        printf("child(input) process!,  PID : %d\n", getpid());
+        //printf("child(input) process!,  PID : %d\n", getpid());
         
         /* 프로세스 이름 변경 */
         if (prctl(PR_SET_NAME, (unsigned long) name) < 0) perror("prctl()");
@@ -689,7 +670,7 @@ int create_input()
         int childStatus;                   /** local var : input server process의 terminating 상태 저장*/
         int child_wPid;                    /** local var : input server 기다린 이후, return되는 child Pid 저장*/
 
-        printf("parent process!,  PID : %d\n", getpid());
+        // printf("parent process!,  PID : %d\n", getpid());
         
         sleep(3);
 
