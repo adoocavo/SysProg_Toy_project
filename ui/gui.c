@@ -51,7 +51,7 @@ int create_gui()
     
     if((guiPid = fork()) == 0)           
     {
-        printf("child(Gui Server) process!,  PID : %d\n", getpid());
+        // printf("child(Gui Server) process!,  PID : %d\n", getpid());
         
         ////Gui server process 동작 시작  
         gui_server();  
@@ -65,7 +65,7 @@ int create_gui()
         int childStatus;                   /** local var : Gui server process의 terminating 상태 저장*/
         int child_wPid;                    /** local var : Gui server 기다린 이후, return되는 child Pid 저장*/
 
-        printf("parent process!,  PID : %d\n", getpid());
+        // printf("parent process!,  PID : %d\n", getpid());
         
         // 1. caller에서 새로 생성한 자식 process wait 처리
         return guiPid;
