@@ -11,9 +11,9 @@
 #include <assert.h>
 #include <limits.h>
 #include <mqueue.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-
+#include <sys/stat.h>    //define mode constant (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH ....)
+#include <fcntl.h>       //define O_* constants (O_RDONLY, O_CREAT....)
+#include <semaphore.h>
 
 #include "./../hal/camera_HAL.h"
 #include "system_server.h"
@@ -26,40 +26,6 @@
 #define TIMER_SIG SIGRTMAX      //POSIX RTS 사용
 #define NUM_OF_THREADS 5
 #define NUM_OF_MQ 4             //open할 message queue file 개수
-/** feature : timer set + create 
- * @param {long} initial_sec, initial_usec, interval_sec, interval_usec
- * @return {void} 
- * @todo  posix timer set + create (by using timer_create() and timer_create())
-*/
-void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_sec, long interval_usec)
-{
-    timer_t *tidlist;
-
-    //1. sigevent struct 설정 for timer_create() 
-    struct sigevent   sev;    
-    sev.sigev_notify = SIGEV_SIGNAL;
-    sev.sigev_signo = TIMER_SIG;
-
-    if(timer_create(CLOCK_REALTIME, &sev, &tidlist[0]) == -1)  perror("timer_create");
-
-
-    //2. itimerspec struct 설정 for timer_settime() 
-    struct itimerspec ts;
-
-    //2_1. timer 시간 간격, 초기값 설정
-    ///it_value : 첫 만기 시점(첫 번째 TIMER_SIG 발생 시점)
-    ts.it_value.tv_sec = initial_sec;              //sec 값
-    ts.it_value.tv_nsec = initial_usec;             //nano sec 값
-
-    ///it_interval : 타이머의 반복 주기()
-    ts.it_interval.tv_sec = interval_sec;         
-    ts.it_interval.tv_nsec = interval_usec;
-
-    //2_2. timer_settime
-    if(timer_settime(tidlist[0], 0, &ts, NULL) == -1)  perror("timer_settime");
-
-}
-
 
 /***************************************************************************************/
 /******************************** message queue괸련 선언  - start ********************************/
@@ -93,10 +59,10 @@ static const char *prompt_perm_filename = NULL;
 /***************************************************************************************/
 
 
-/**
- * @note Set nonzero on receipt of SIGALRM : SIGALRM -> toy_timer = 1;
-*/
-static int toy_timer = 0;  
+/***************************************************************************************/
+/******************************** timer signal 처리 괸련 선언  - start ********************************/
+/***************************************************************************************/
+
 /*
 int posix_sleep_ms(unsigned int timeout_ms)
 {
@@ -109,75 +75,102 @@ int posix_sleep_ms(unsigned int timeout_ms)
 }
 */
 
+/**
+ * @note Set nonzero on receipt of SIGALRM : SIGALRM -> toy_timer = 1;
+*/
+static int toy_timer = 0;  
+static bool global_timer_stopped = false;       //ALARM 발생시 log 처리 여부 : false(log 기록해라)
+
+/** feature : signal_exit
+ * @note alarm handler 종료시 log 출력하도록 alarm_log_thread에 pthread_cond_signal()
+*/
+void system_timeout_handler(void);
+
+/** feature : TIMER_SIG handler (timer_expire_signal_handler)
+ * @param {void} 
+ * @return {int} 0
+ * @todo : tick값() 출력 
+*/
+static void timerSig_handler(int sig, siginfo_t *si, void *uc);
+
+void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_sec, long interval_usec);
+
 /** feature : signal_exit
  * @note alarm handler 종료시 log 출력하도록 alarm_log_thread에 pthread_cond_signal()
 */
 void signal_exit(void);
+
+/***************************************************************************************/
+/******************************** timer signal 처리 괸련 선언 - end ********************************/
+/***************************************************************************************/
+
+
+/***************************************************************************************/
+/******************************** unnamed semaphore 괸련 선언  - start ********************************/
+/***************************************************************************************/
+
+//1. sem_t 변수 선언 
+static sem_t timeout_handler_sem;
+
+/***************************************************************************************/
+/******************************** unnamed semaphore 괸련 선언 - end ********************************/
+/***************************************************************************************/
+
+
+/***************************************************************************************/
+/******************************** mutex lock 괸련 선언  - start ********************************/
+/***************************************************************************************/
+
+/** feature : system_timeout_handler 수행관련 mutex 변수
+ *  
+*/
+pthread_mutex_t toy_timer_mutex = PTHREAD_MUTEX_INITIALIZER;
+// pthread_cond_t  toy_timer_cond = PTHREAD_COND_INITIALIZER;
+
 
 /** feature : alarm_log_thread 수행관련 mutex 변수
  *  
 */
 pthread_mutex_t system_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  system_loop_cond  = PTHREAD_COND_INITIALIZER;
-bool            system_loop_exit = false;                     ///< true if main loop should exit
+bool            system_loop_exit = false;    ///< true if main loop should exit
 
-/** feature : TIMER_SIG handler 
- * @param {void} 
- * @return {int} 0
- * @todo : tick값() 출력 
-*/
-static void timerSig_handler(int sig, siginfo_t *si, void *uc)
-{
-
-    printf("\n/**************** TIMER_SIG handler - start ****************/\n");
-    /** 
-     * @note signal handler내에서는 lock 걸면 안된다 
-     *  => global var(critical sec 생성하는) 관련 r/w thread를 따로 생성해서, 해당 thread에서 수행하도록!
-     *  => signal handler는 최대한 짧게 작성
-    */
-    ++toy_timer;
-
-    timer_t *tidptr;
-
-    tidptr = si->si_value.sival_ptr;
-
-    printf("\n[%s] Got signal %d : %d번째 alarm \n", currTime("%T"), sig, toy_timer);
-
-    signal_exit();
-    printf("/**************** TIMER_SIG handler - end ****************/\n\n");
-}
+/***************************************************************************************/
+/******************************** mutex lock 괸련 선언 - end ********************************/
+/***************************************************************************************/
 
 
 /** feature : thread_func  
- * 
+ * @note thread_funcs,threads_name idx 순서대로 ~
 */
 void * watchdog_thread_func(void *);
 void * monitor_thread_func(void *);
 void * disk_service_thread_func(void *);
 void * camera_service_thread_func(void *);
-void * alarm_log_thread_func(void *);
+void * timer_thread_func(void *);
 
 
 /** thread_func array 
- * 
+ *  @note idx 순서대로 
 */
 void * (*thread_funcs[NUM_OF_THREADS]) (void *) = {
     watchdog_thread_func,
     monitor_thread_func,
     disk_service_thread_func,
     camera_service_thread_func,
-    alarm_log_thread_func
+    timer_thread_func,
+    
 };
 
 /** threads_name ary
- * 
+ * @note idx 순서대로 
 */
 char* threads_name[NUM_OF_THREADS] = {
     "watchdog_thread",
     "monitor_thread",
     "disk_service_thread",
     "camera_service_thread",
-    "alarm_log_thread"
+    "timer_thread"
 };
 
 /** feature : main process가 생성한 모든 process monitoring 
@@ -187,31 +180,8 @@ char* threads_name[NUM_OF_THREADS] = {
 */
 int system_server()
 {
-    struct sigaction sa;
-    timer_t *tidlist;
-
     printf("나 system_server 프로세스!\n");
     
-    /****************************************************************************************************/
-    /******************* 5초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
-    /****************************************************************************************************/
-
-    //1. sig hanlder 등록(TIMER_SIG)
-    memset(&sa, 0, sizeof(sigaction));
-
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_SIGINFO;
-    sa.sa_sigaction = timerSig_handler;
-
-    if(sigaction(TIMER_SIG, &sa, NULL) == -1)   perror("sigaction");
-
-    //2. set + create timer
-    set_create_peridicTimer(60, 0, 10, 0);
-    /****************************************************************************************************/
-    /******************* 5초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
-    /****************************************************************************************************/
-    
-
     /****************************************************************************************************/
     /************************************* message queue open - start *******************************************/
     /****************************************************************************************************/
@@ -274,33 +244,17 @@ int system_server()
 
     printf("<== system\n");
 
-
+    printf("main thread : busy waiting\n");
     while(1) 
     {
-        //printf("main thread : busy waiting\n");
-
         sleep(10);
         //posix_sleep_ms(5000);
     }
     
-
-    /****************************************************************************************************/
-    /****************************** posix msg queue unlink (for IPC) - start *******************************/
-    /****************************************************************************************************/
-
-    //3. unlink : message queue delete
-    
-    for(int i = 0; i <  NUM_OF_MQ; ++i)
-    {
-        if(mq_unlink(msg_queues_str[i]) == -1) perror("mq_unlink");
-    }
-
-    /****************************************************************************************************/
-    /****************************** posix msg queue unlink (for IPC) - end *******************************/
-    /****************************************************************************************************/
-
     return 0;
 }
+
+
 
 
 
@@ -542,6 +496,7 @@ void * disk_service_thread_func(void *arg)
 /** feature : camera_service_thread_func definition 
  * 
 */
+#define CAMERA_TAKE_PICTURE 1
 void * camera_service_thread_func(void *arg)
 {  
     char *str = arg;
@@ -590,7 +545,7 @@ void * camera_service_thread_func(void *arg)
         printf("param2 : %d\n", ((toy_msg_t*)received_msg_buffer)->param2);
         //printf("param3 : %s\n", (char*)((toy_msg_t*)received_msg_buffer)->param3);
 
-        if(((toy_msg_t*)received_msg_buffer)->msg_type == 1) toy_camera_take_picture();
+        if(((toy_msg_t*)received_msg_buffer)->msg_type == CAMERA_TAKE_PICTURE) toy_camera_take_picture();
 
         printf("\n");
 
@@ -608,28 +563,130 @@ void * camera_service_thread_func(void *arg)
 }
 
 
-/** feature : alarm_log_thread_func definition 
+/** feature : timer_thread definition 
  * @note alarm 올때마다 Log 찍는 기능 따로 구현
 */
-void * alarm_log_thread_func(void *arg)
+void * timer_thread_func(void *arg)
 {  
+    sleep(5);
     char *str = arg;
     printf("나 %s\n", str);
 
-    while(1)
+    /****************************************************************************************************/
+    /******************* 1초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
+    /****************************************************************************************************/
+
+    //1. sig hanlder 등록(TIMER_SIG)
+    struct sigaction sa;
+    timer_t *tidlist;
+    memset(&sa, 0, sizeof(sigaction));
+
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = timerSig_handler;
+
+    if(sigaction(TIMER_SIG, &sa, NULL) == -1) perror("sigaction");
+
+    //2. init semaphore
+    sem_init(&timeout_handler_sem, 0, 0); 
+    
+    //3. set + create timer
+    set_create_peridicTimer(1, 0, 1, 0);
+    /****************************************************************************************************/
+    /******************* 1초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
+    /****************************************************************************************************/
+
+	while (!global_timer_stopped) 
     {
-        pthread_mutex_lock(&system_loop_mutex);
+        sem_wait(&timeout_handler_sem);
 
-        if(system_loop_exit == false)
-        {
-            pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
-        }
-        //printf(" <== system\n");
-        system_loop_exit = false;
-        pthread_mutex_unlock(&system_loop_mutex);
+		system_timeout_handler();
+        signal_exit();
+	
+        sem_init(&timeout_handler_sem, 0, 0);
+
     }
+	return 0;
+}
 
-    return NULL;
+
+/** feature : TIMER_SIG handler (timer_expire_signal_handler)
+ * @param {void} 
+ * @return {int} 0
+ * @todo : tick값() 출력 
+*/
+static void timerSig_handler(int sig, siginfo_t *si, void *uc)
+{
+    /** 
+     * @note signal handler내에서는 mutex lock 걸면 안된다 
+     *  => global var(critical sec 생성하는) 관련 r/w thread를 따로 생성해서, 해당 thread에서 수행하도록!
+     *  => signal handler는 최대한 짧게 작성
+    */
+    
+    // printf("\n/**************** TIMER_SIG handler - start ****************/\n");
+    // timer_t *tidptr;
+    // tidptr = si->si_value.sival_ptr;
+
+    // printf("\n[%s] Got signal %d : \n\n", currTime("%T"), sig);
+    // //printf("    *sival_ptr         = %ld\n\n", (long) *tidptr);
+
+    // printf("/**************** TIMER_SIG handler - end ****************/\n\n");
+    sem_post(&timeout_handler_sem);
+}
+
+/** feature : system_timeout_handler
+ * @note alarm handler 종료시 log 출력하도록 alarm_log_thread에 pthread_cond_signal()
+*/
+void system_timeout_handler(void)
+{
+    
+    printf("\n\n\n\n/**************** system_timeout_handler - start ****************/\n\n");
+
+    pthread_mutex_lock(&toy_timer_mutex);
+    
+    toy_timer++;
+    printf("[%s] toy_timer: %d\n", currTime("%T"), toy_timer);
+    
+    pthread_mutex_unlock(&toy_timer_mutex);    
+
+    printf("\n/**************** system_timeout_handler - end ****************/\n");
+
+}
+
+/** feature : timer set + create 
+ * @param {long} initial_sec, initial_usec, interval_sec, interval_usec
+ * @return {void} 
+ * @todo  posix timer set + create (by using timer_create() and timer_create())
+*/
+void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_sec, long interval_usec)
+{
+    timer_t *tidlist;
+
+    //1. sigevent struct 설정 for timer_create() 
+    struct sigevent sev;    
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = TIMER_SIG;
+
+    //if(timer_create(CLOCK_REALTIME, &sev, &tidlist[0]) == -1)  perror("timer_create");
+    if(timer_create(CLOCK_REALTIME, &sev, &tidlist) == -1)  perror("timer_create");
+
+
+    //2. itimerspec struct 설정 for timer_settime() 
+    struct itimerspec ts;
+
+    //2_1. timer 시간 간격, 초기값 설정
+    ///it_value : 첫 만기 시점(첫 번째 TIMER_SIG 발생 시점)
+    ts.it_value.tv_sec = initial_sec;              //sec 값
+    ts.it_value.tv_nsec = initial_usec;             //nano sec 값
+
+    ///it_interval : 타이머의 반복 주기()
+    ts.it_interval.tv_sec = interval_sec;         
+    ts.it_interval.tv_nsec = interval_usec;
+
+    //2_2. timer_settime
+    //if(timer_settime(tidlist[0], 0, &ts, NULL) == -1)  perror("timer_settime");
+    if(timer_settime(tidlist, 0, &ts, NULL) == -1)  perror("timer_settime");
+
 }
 
 /** feature : signal_exit
