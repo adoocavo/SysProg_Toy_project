@@ -14,6 +14,8 @@
 #include <sys/stat.h>    //define mode constant (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH ....)
 #include <fcntl.h>       //define O_* constants (O_RDONLY, O_CREAT....)
 #include <semaphore.h>
+#include <sys/types.h>    /*for potability*/
+#include <sys/shm.h> 
 
 #include "./../hal/camera_HAL.h"
 #include "system_server.h"
@@ -22,10 +24,24 @@
 #include "./../web_server/web_server.h"
 #include "./../project_libs/time/currTime.h"
 #include "./../project_libs/toy_message.h"
+#include "./../project_libs/shared_memory.h"
+
 
 #define TIMER_SIG SIGRTMAX      //POSIX RTS 사용
 #define NUM_OF_THREADS 5
-#define NUM_OF_MQ 4             //open할 message queue file 개수
+
+/***************************************************************************************/
+/********************************  SV shm 괸련 선언 - start ********************************/
+/***************************************************************************************/
+static shm_sensor_t *the_sensor_info = NULL; 
+
+
+/***************************************************************************************/
+/******************************** SV shm 괸련 선언 - end ********************************/
+/***************************************************************************************/
+
+
+
 
 /***************************************************************************************/
 /******************************** message queue괸련 선언  - start ********************************/
@@ -34,6 +50,7 @@
 /** feature : system_server proc 내에서 생성되는 threads들의 msg queue mqd저장
  * @note idx 0~4 순서대로 watchdog_mqd, monitor_mqd, disk_mqd, camera_mqd
 */
+#define NUM_OF_MQ 4             //open할 message queue file 개수
 static mqd_t mqds[NUM_OF_MQ] = {
             0,
 };
@@ -317,19 +334,19 @@ void * watchdog_thread_func(void *arg)
      * @note mq_getattr().mq_msgsize : receive 하여 저장할 buffer size 지정 위해 사용
      * @note unsigned int prio : receive 받은 message의 우선 순위 저장
      * @note ssize_t numRead : 몇 byte message 수신했는지 저장
-     * @note char *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
+     * @note toy_msg_t *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
     */
     //0. open mq file in parent process
 
     //1. receive 하기위한 setting : mq_getattr() -> received_msg_buffer 동적할당
     struct mq_attr attr;
     unsigned int prio_of_msg;
-    char *received_msg_buffer;
+    toy_msg_t *received_msg_buffer;
     unsigned int current_msg_num;
     struct timespec set_timeout; 
 
     if(mq_getattr(mqds[0], &attr) == -1) perror("mq_getattr(watchdog_thread_func)");
-    received_msg_buffer = malloc(sizeof(char) * attr.mq_msgsize);
+    received_msg_buffer = malloc(attr.mq_msgsize);
     set_timeout.tv_sec = 500;
     set_timeout.tv_nsec = 0;
 
@@ -338,11 +355,10 @@ void * watchdog_thread_func(void *arg)
     //2. receive
     ssize_t numRead;           //몇 byte message 수신했는지 저징
 
-    //while(attr.mq_curmsgs > 0)
     while(1)
     {
         //2_1. receive
-        numRead = mq_receive(mqds[0], received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
+        numRead = mq_receive(mqds[0], (char *)received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
         //numRead = mq_timedreceive(mqds[0], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
         assert(numRead != -1);
 
@@ -352,17 +368,10 @@ void * watchdog_thread_func(void *arg)
         printf("msg_type : %d\n", ((toy_msg_t*)received_msg_buffer)->msg_type);
         printf("param1 : %d\n", ((toy_msg_t*)received_msg_buffer)->param1);
         printf("param2 : %d\n", ((toy_msg_t*)received_msg_buffer)->param2);
-        //printf("param3 : %s\n", (char*)((toy_msg_t*)received_msg_buffer)->param3);
 
         printf("\n");
     }
-/*
-    printf("timeout : %s!!!\n", str);
-    while(1)
-    {
-        sleep(5);
-    }
-*/
+
 
     return NULL;
 }
@@ -370,6 +379,7 @@ void * watchdog_thread_func(void *arg)
 /** feature : monitor_thread_func definition 
  * 
 */
+#define SENSOR_DATA 1
 void * monitor_thread_func(void *arg)
 {  
     char *str = arg;
@@ -379,52 +389,67 @@ void * monitor_thread_func(void *arg)
      * @note mq_getattr().mq_msgsize : receive 하여 저장할 buffer size 지정 위해 사용
      * @note unsigned int prio : receive 받은 message의 우선 순위 저장
      * @note ssize_t numRead : 몇 byte message 수신했는지 저장
-     * @note char *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
+     * @note toy_msg_t *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
+     * @note key_t sensor_shm_key : for shmat() 
+  
     */
     //0. open mq file in parent process
 
     //1. receive 하기위한 setting : mq_getattr() -> received_msg_buffer 동적할당
     struct mq_attr attr;
     unsigned int prio_of_msg;
-    char *received_msg_buffer;
+    toy_msg_t *received_msg_buffer;
     unsigned int current_msg_num;
     struct timespec set_timeout; 
+    key_t sensor_shm_key;
+
 
     if(mq_getattr(mqds[1], &attr) == -1) perror("mq_getattr(monitor_thread_func)");
-    received_msg_buffer = malloc(sizeof(char) * attr.mq_msgsize);
+    received_msg_buffer = malloc(attr.mq_msgsize);
+    
     set_timeout.tv_sec = 500;
     set_timeout.tv_nsec = 0;
 
-    //current_msg_num = attr.mq_curmsgs;
-
     //2. receive
     ssize_t numRead;           //몇 byte message 수신했는지 저징
-
-    //while(attr.mq_curmsgs > 0)
+    
     while(1)
     {
         //2_1. receive
-        numRead = mq_receive(mqds[1], received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
+        numRead = mq_receive(mqds[1], (char *)received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
         //numRead = mq_timedreceive(mqds[1], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
+
         assert(numRead != -1);
 
         //2_2. 받은 message 출력
-        printf("(%s) Read %ld bytes; priority : %u\n\n", msg_queues_str[1], numRead, prio_of_msg);
+        printf("\n\n/******************** monitor - start ********************/");
 
-        printf("msg_type : %d\n", ((toy_msg_t*)received_msg_buffer)->msg_type);
-        printf("param1 : %d\n", ((toy_msg_t*)received_msg_buffer)->param1);
-        printf("param2 : %d\n", ((toy_msg_t*)received_msg_buffer)->param2);
-        //printf("param3 : %s\n", (char*)((toy_msg_t*)received_msg_buffer)->param3);
+        printf("\n[%s] Read %ld bytes; priority : %u\n\n", currTime("%T"), numRead, prio_of_msg);
 
-        printf("\n");
+        printf("msg_type : %d\n", received_msg_buffer->msg_type);
+        printf("param1(sensor_shm_key) : %d\n", received_msg_buffer->param1);
+        printf("param2 : %d\n", received_msg_buffer->param2);
+
+
+        //3. 
+        if (received_msg_buffer->msg_type == SENSOR_DATA) 
+        {
+            sensor_shm_key = received_msg_buffer->param1;
+
+            //3_1. attaching to monitor_thread(input process)
+            the_sensor_info = (shm_sensor_t *)shmat(sensor_shm_key, NULL, SHMAT_FLAGS_R);
+
+            //3_2. 출력
+            printf("temp : %d Celsius\n", the_sensor_info->temp);
+            printf("press : %d mV\n", the_sensor_info->press);
+            printf("humidity : %d RH\n", the_sensor_info->humidity);
+
+        }
+
+
+        printf("/******************** monitor - end ********************/\n\n");
+
     }
-/*
-    printf("timeout : %s!!!\n", str);
-    while(1)
-    {
-        sleep(5);
-    }
-*/
 
     return NULL;
 }
@@ -443,33 +468,31 @@ void * disk_service_thread_func(void *arg)
      * @note mq_getattr().mq_msgsize : receive 하여 저장할 buffer size 지정 위해 사용
      * @note unsigned int prio : receive 받은 message의 우선 순위 저장
      * @note ssize_t numRead : 몇 byte message 수신했는지 저장
-     * @note char *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
+     * @note toy_msg_t *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
     */
     //0. open mq file in parent process
 
     //1. receive 하기위한 setting : mq_getattr() -> received_msg_buffer 동적할당
     struct mq_attr attr;
     unsigned int prio_of_msg;
-    char *received_msg_buffer;
+    toy_msg_t *received_msg_buffer;
     unsigned int current_msg_num;
     struct timespec set_timeout; 
 
     if(mq_getattr(mqds[2], &attr) == -1) perror("mq_getattr(camera_service_thread_func)");
-    received_msg_buffer = malloc(sizeof(char) * attr.mq_msgsize);
+    received_msg_buffer = malloc(attr.mq_msgsize);
     set_timeout.tv_sec = 500;
     set_timeout.tv_nsec = 0;
 
-    //current_msg_num = attr.mq_curmsgs;
 
     //2. receive
     ssize_t numRead;           //몇 byte message 수신했는지 저징
 
-    //while(attr.mq_curmsgs > 0)
     while(1)
     {
         //2_1. receive
-        numRead = mq_receive(mqds[2], received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
-        // numRead = mq_timedreceive(mqds[2], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
+        numRead = mq_receive(mqds[2], (char *)received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
+        //numRead = mq_timedreceive(mqds[2], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
         assert(numRead != -1);
 
         //2_2. 받은 message 출력
@@ -478,17 +501,9 @@ void * disk_service_thread_func(void *arg)
         printf("msg_type : %d\n", ((toy_msg_t*)received_msg_buffer)->msg_type);
         printf("param1 : %d\n", ((toy_msg_t*)received_msg_buffer)->param1);
         printf("param2 : %d\n", ((toy_msg_t*)received_msg_buffer)->param2);
-        //printf("param3 : %s\n", (char*)((toy_msg_t*)received_msg_buffer)->param3);
 
         printf("\n");
     }
-/*
-    printf("timeout : %s!!!\n", str);
-    while(1)
-    {
-        sleep(5);
-    }
-*/
 
     return NULL;
 }
@@ -508,20 +523,20 @@ void * camera_service_thread_func(void *arg)
      * @note mq_getattr().mq_msgsize : receive 하여 저장할 buffer size 지정 위해 사용
      * @note unsigned int prio : receive 받은 message의 우선 순위 저장
      * @note ssize_t numRead : 몇 byte message 수신했는지 저장
-     * @note char *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
+     * @note toy_msg_t *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
     */
     //0. open mq file in parent process
 
     //1. receive 하기위한 setting : mq_getattr() -> received_msg_buffer 동적할당
     struct mq_attr attr;
     unsigned int prio_of_msg;
-    char *received_msg_buffer;
+    toy_msg_t *received_msg_buffer;
     unsigned int current_msg_num;
     struct timespec set_timeout; 
 
 
     if(mq_getattr(mqds[3], &attr) == -1) perror("mq_getattr(camera_service_thread_func)");
-    received_msg_buffer = malloc(sizeof(char) * attr.mq_msgsize);
+    received_msg_buffer = malloc(attr.mq_msgsize);
     set_timeout.tv_sec = 500;
     set_timeout.tv_nsec = 0;
     //current_msg_num = attr.mq_curmsgs;
@@ -529,12 +544,11 @@ void * camera_service_thread_func(void *arg)
     //2. receive
     ssize_t numRead;           //몇 byte message 수신했는지 저징
 
-    //while(attr.mq_curmsgs > 0)
     while(1)
     {
         //2_1. receive
-        numRead = mq_receive(mqds[3], received_msg_buffer, attr.mq_msgsize, prio_of_msg);
-        // numRead = mq_timedreceive(mqds[3], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
+        numRead = mq_receive(mqds[3], (char *)received_msg_buffer, attr.mq_msgsize, prio_of_msg);
+        //numRead = mq_timedreceive(mqds[3], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
         assert(numRead != -1);
 
         //2_2. 받은 message 출력
@@ -543,22 +557,14 @@ void * camera_service_thread_func(void *arg)
         printf("msg_type : %d\n", ((toy_msg_t*)received_msg_buffer)->msg_type);
         printf("param1 : %d\n", ((toy_msg_t*)received_msg_buffer)->param1);
         printf("param2 : %d\n", ((toy_msg_t*)received_msg_buffer)->param2);
-        //printf("param3 : %s\n", (char*)((toy_msg_t*)received_msg_buffer)->param3);
 
         if(((toy_msg_t*)received_msg_buffer)->msg_type == CAMERA_TAKE_PICTURE) toy_camera_take_picture();
 
         printf("\n");
 
-        //if(write(STDOUT_FILENO, received_msg_buffer, numRead) == -1) perror("write(camera_service_thread_func)");
-        //write(STDOUT_FILENO, "\n", 1);
+
     }
-/*
-    printf("timeout : %s!!!\n", str);
-    while(1)
-    {
-        sleep(5);
-    }
-*/
+
     return NULL;
 }
 
@@ -591,14 +597,24 @@ void * timer_thread_func(void *arg)
     sem_init(&timeout_handler_sem, 0, 0); 
     
     //3. set + create timer
-    set_create_peridicTimer(1, 0, 1, 0);
+    //set_create_peridicTimer(1, 0, 1, 0);
     /****************************************************************************************************/
     /******************* 1초 타이머 생성 + TIMER_SIG handler 등록 *******************************************/
     /****************************************************************************************************/
 
+    int retcode;
 	while (!global_timer_stopped) 
     {
-        sem_wait(&timeout_handler_sem);
+        int retcode = sem_wait(&timeout_handler_sem);
+		if (retcode == -1 && errno == EINTR)   //EINTR : 시스템 콜 수행중 인터럽트가 걸려 수행이 중단된 경우
+        {
+		    continue;
+		}
+		if (retcode == -1) 
+        {
+		    perror("sem_wait");
+		    exit(-1);
+		}
 
 		system_timeout_handler();
         signal_exit();
@@ -617,20 +633,6 @@ void * timer_thread_func(void *arg)
 */
 static void timerSig_handler(int sig, siginfo_t *si, void *uc)
 {
-    /** 
-     * @note signal handler내에서는 mutex lock 걸면 안된다 
-     *  => global var(critical sec 생성하는) 관련 r/w thread를 따로 생성해서, 해당 thread에서 수행하도록!
-     *  => signal handler는 최대한 짧게 작성
-    */
-    
-    // printf("\n/**************** TIMER_SIG handler - start ****************/\n");
-    // timer_t *tidptr;
-    // tidptr = si->si_value.sival_ptr;
-
-    // printf("\n[%s] Got signal %d : \n\n", currTime("%T"), sig);
-    // //printf("    *sival_ptr         = %ld\n\n", (long) *tidptr);
-
-    // printf("/**************** TIMER_SIG handler - end ****************/\n\n");
     sem_post(&timeout_handler_sem);
 }
 

@@ -15,6 +15,8 @@
         "signal.h": "c",
         "assert.h": "c",
         "execinfo.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "toy_message.h": "c",
+        "shared_memory.h": "c"
     }
 }
