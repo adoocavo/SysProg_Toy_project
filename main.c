@@ -12,6 +12,8 @@
 #include "./ui/input.h"
 #include "./web_server/web_server.h"
 #include "./project_libs/time/currTime.h"
+#include "./project_libs/toy_message.h"
+
 
 
 /**
@@ -28,7 +30,7 @@ static volatile int childProcNum;
 static void sigchld_handler(int sig)
 {   
     printf("/**************** SIGCHLD handler - start ****************/\n");
-    printf("%s handler: Caught SIGCHLD(%d)\n", currTime("%T"), sig);
+    printf("[%s] handler: Caught SIGCHLD(%d)\n", currTime("%T"), sig);
 
     int status, savedErrno;
     pid_t id;
@@ -68,7 +70,7 @@ static void sigchld_handler(int sig)
  * 
 */
 #define MQ_NUM_MSG 10                //각 posix msg queue에 저장될 수 있는 msg 개수
-#define MQ_MSG_SIZE 2048             //각 msg의 size(default : 8KB)
+//#define MQ_MSG_SIZE 2048             //각 msg의 size(default : 8KB)
 #define NUM_OF_MQ 4                  //생성할 message queue file 개수
 #define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) 
 /*
@@ -172,7 +174,7 @@ int main()
 
     struct mq_attr attr;                        
     attr.mq_maxmsg = MQ_NUM_MSG;
-    attr.mq_msgsize = MQ_MSG_SIZE;
+    attr.mq_msgsize = sizeof(toy_msg_t);
 
     //2. open : message queue create
     for(int i = 0; i <  NUM_OF_MQ; ++i)

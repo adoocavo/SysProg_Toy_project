@@ -14,17 +14,24 @@
 #include <mqueue.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/types.h>    /*for potability*/
+#include <sys/shm.h> 
+#include <bits/shmlba.h>  /* */
+#include <time.h>
+#include <stdlib.h>
 
 #include "./../system/system_server.h"
 #include "gui.h"
 #include "input.h"
 #include "./../web_server/web_server.h"
 #include "./../project_libs/toy_message.h"
+#include "./../project_libs/shared_memory.h"
 
 #define TOY_TOK_BUFSIZE 64
 #define TOY_TOK_DELIM " \t\r\n\a"
 #define TOY_BUFFSIZE 1024
 #define NUM_OF_MQ 4             //open할 message queue file 개수
+
 
 /***************************************************************************************/
 /******************************** mutex lock + cond var - start ********************************/
@@ -47,7 +54,6 @@ static pthread_cond_t global_message_cond = PTHREAD_COND_INITIALIZER;
 /***************************************************************************************/
 /******************************** mutex lock + cond var - end ********************************/
 /***************************************************************************************/
-
 
 
 /***************************************************************************************/
@@ -79,6 +85,18 @@ static const char *prompt_perm_filename = NULL;
 
 /***************************************************************************************/
 /******************************** message queue괸련 선언 - end ********************************/
+/***************************************************************************************/
+
+
+/***************************************************************************************/
+/********************************  SV shm 괸련 선언 - start ********************************/
+/***************************************************************************************/
+
+static shm_sensor_t *the_sensor_info = NULL; 
+
+
+/***************************************************************************************/
+/******************************** SV shm 괸련 선언 - end ********************************/
 /***************************************************************************************/
 
 
@@ -203,43 +221,77 @@ void *sensor_thread(void* arg)            //mutex
     char *s = arg;
     printf("나 %s", s);
 
-    int i = 0;
-    while (1) 
-    {   
-        i = 0;
+    /** 0. shmget() / mq_send() 위한 var 선언 
+     * @note shm_retcode, mq_retcode
+     * @note sensor_shm_key : shmget()으로부터 생성된 key value 저장
+     * @note toy_msg_t msg_to_monitor : mqueue로 전송
+    */
+    int shm_retcode;
+    int sensor_shm_key;
+    int mq_retcode;
+    toy_msg_t msg_to_monitor;
 
-        /******************************** pthread_mutex_lock + cond var - start ********************************/
-        
-        if(pthread_mutex_lock(&global_message_mutex)) perror("pthread_mutex_lock : sensor_thread(global_message_mutex)");
+    enum def_shm_key shm_key = SHM_KEY_SENSOR;
+    
 
-        if(global_message[0] == NULL)
-        {
-            if(pthread_cond_wait(&global_message_cond, &global_message_mutex))perror("pthread_cond_wait : sensor_thread(global_message_mutex)");
-
-            // TOY_prompt_operation_check = 1;
-        }
-
-        while (global_message[i] != NULL)
-        {
-            printf("%c", global_message[i]);
-            fflush(stdout);
-            //posix_sleep_ms(500);
-            
-            sleep(1);
-            i++;
-        }
-        // TOY_prompt_operation_check = 0;
-
-        memset(global_message, NULL, sizeof(global_message));
-
-        if(pthread_mutex_unlock(&global_message_mutex)) perror("pthread_mutex_unlock : sensor_thread(global_message_mutex)");
-        printf("\n");
-        
-        /******************************** pthread_mutex_lock + cond var - end ********************************/
-
-        //posix_sleep_ms(5000);
+    while(1)
+    {
         sleep(5);
+
+        /***************************************************************************************/
+        /******************************** SV shm 생성 + sensor_info 저장 - start ********************************/
+        /***************************************************************************************/
+
+        /** 1. shm segment 생성-1(shmget()) 
+         * @note shmget() 를 사용하여 shm 생성 + key값 얻기
+         * @return 생성된 shm segment's kev value(seg id) 
+        */
+        sensor_shm_key = shmget(shm_key, sizeof(shm_sensor_t), IPC_CREAT | SHMGET_FLAGS);
+        assert(sensor_shm_key != -1);
+
+        /** 2. shm segment 생성-2(shmgat()) 
+         * @note shmgat() 를 사용하여 address에 shm을 attach
+         * @note +) 프로세스가 종료될 때 자동으로 공유 메모리는 detach 된다.
+         * @note 2번째 argument NULL : kernel이 적절한(사용하지 않은) 주소를 붙임
+         * @return attached shm's address
+        */
+        the_sensor_info = (shm_sensor_t *)shmat(sensor_shm_key, NULL, SHMAT_FLAGS_RW);
+        assert((void *)the_sensor_info != (void *)-1); 
+
+        /** 3. shm segment에 data 저장
+         * @note the_sensor_info 사용하여 저장
+         * 
+        */ 
+        the_sensor_info->temp = rand() % 126 - 40;       //-40 ~ 85
+        the_sensor_info->press = rand() % 101;           //mV : 0 ~ 100
+        the_sensor_info->humidity = rand() % 21 - 30;    //RH : 30 ~ 50
+
+        /***************************************************************************************/
+        /******************************** SV shm 생성 + sensor_info 저장 - start ********************************/
+        /***************************************************************************************/
+
+
+        /***************************************************************************************/
+        /******************************** message queue 전송(send) - start ********************************/
+        /***************************************************************************************/
+        //0. open 
+
+        //1. send : 생성된 shm segment's kev value(seg id)를 전송
+        msg_to_monitor.msg_type = 1;
+        msg_to_monitor.param1 = sensor_shm_key;
+        msg_to_monitor.param2 = 0;
+        msg_to_monitor.param3 = NULL;
+
+
+        mq_retcode = mq_send(mqds[1], (char *)&msg_to_monitor, sizeof(msg_to_monitor), 0);
+
+
+        /***************************************************************************************/
+        /******************************** message queue 전송(send) - end ********************************/
+        /***************************************************************************************/
+
     }
+   
 
     return 0;
 }
@@ -307,7 +359,7 @@ int toy_exit(char **args)
 */
 int toy_message_queue(char* *args)
 {
-    int mqretcode;
+    int mq_retcode;
     toy_msg_t msg;
 
     if (args[1] == NULL || args[2] == NULL) 
@@ -323,8 +375,8 @@ int toy_message_queue(char* *args)
 
 //      msg.param3 = args[3];     //메세지 전달 추가 => 포인터를 전달하는거라 error발생
 
-        mqretcode = mq_send(mqds[3], (char *)&msg, sizeof(msg), 0);       //mqds[3] : "/camera_mq"
-        assert(mqretcode == 0);
+        mq_retcode = mq_send(mqds[3], (char *)&msg, sizeof(msg), 0);       //mqds[3] : "/camera_mq"
+        assert(mq_retcode == 0);
     }
 
     //mqretcode = mq_receive(prompt_perm_mqd, );
@@ -628,7 +680,8 @@ int create_input()
 {
     pid_t inputPid;                        //local var : input server process's PID
     const char *name = "input_server";     
-  
+    srand(time(NULL));
+
     /**
      * @note fork -> child : input server process 수행 
      *              parent : input server process 생성 후 wait
@@ -659,7 +712,6 @@ int create_input()
         
         sleep(3);
 
-       
         return inputPid;
 
     }
