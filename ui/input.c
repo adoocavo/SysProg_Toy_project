@@ -234,29 +234,31 @@ void *sensor_thread(void* arg)            //mutex
     enum def_shm_key shm_key = SHM_KEY_SENSOR;
     
 
+
+    /***************************************************************************************/
+    /******************************** SV shm 생성 + sensor_info 저장 - start ********************************/
+    /***************************************************************************************/
+
+    /** 1. shm segment 생성-1(shmget()) 
+     * @note shmget() 를 사용하여 shm 생성 + key값 얻기
+     * @return 생성된 shm segment's kev value(seg id) 
+    */
+    sensor_shm_key = shmget(shm_key, sizeof(shm_sensor_t), IPC_CREAT | SHMGET_FLAGS);
+    assert(sensor_shm_key != -1);
+
+    /** 2. shm segment 생성-2(shmgat()) 
+     * @note shmgat() 를 사용하여 address에 shm을 attach
+     * @note +) 프로세스가 종료될 때 자동으로 공유 메모리는 detach 된다.
+     * @note 2번째 argument NULL : kernel이 적절한(사용하지 않은) 주소를 붙임
+     * @return attached shm's address
+    */
+    the_sensor_info = (shm_sensor_t *)shmat(sensor_shm_key, NULL, SHMAT_FLAGS_RW);
+    assert((void *)the_sensor_info != (void *)-1); 
+
+
     while(1)
     {
         sleep(5);
-
-        /***************************************************************************************/
-        /******************************** SV shm 생성 + sensor_info 저장 - start ********************************/
-        /***************************************************************************************/
-
-        /** 1. shm segment 생성-1(shmget()) 
-         * @note shmget() 를 사용하여 shm 생성 + key값 얻기
-         * @return 생성된 shm segment's kev value(seg id) 
-        */
-        sensor_shm_key = shmget(shm_key, sizeof(shm_sensor_t), IPC_CREAT | SHMGET_FLAGS);
-        assert(sensor_shm_key != -1);
-
-        /** 2. shm segment 생성-2(shmgat()) 
-         * @note shmgat() 를 사용하여 address에 shm을 attach
-         * @note +) 프로세스가 종료될 때 자동으로 공유 메모리는 detach 된다.
-         * @note 2번째 argument NULL : kernel이 적절한(사용하지 않은) 주소를 붙임
-         * @return attached shm's address
-        */
-        the_sensor_info = (shm_sensor_t *)shmat(sensor_shm_key, NULL, SHMAT_FLAGS_RW);
-        assert((void *)the_sensor_info != (void *)-1); 
 
         /** 3. shm segment에 data 저장
          * @note the_sensor_info 사용하여 저장
