@@ -19,6 +19,9 @@
 #include <bits/shmlba.h>  /* */
 #include <time.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <semaphore.h>
+
 
 #include "./../system/system_server.h"
 #include "gui.h"
@@ -92,8 +95,11 @@ static const char *prompt_perm_filename = NULL;
 /********************************  SV shm 괸련 선언 - start ********************************/
 /***************************************************************************************/
 
-static shm_sensor_t *the_sensor_info = NULL; 
+//extern int shm_id[SHM_KEY_MAX - SHM_KEY_BASE];
 
+
+static shm_sensor_t *the_sensor_info = NULL; 
+static shm_str_msg_t *the_str_msg_info = NULL;
 
 /***************************************************************************************/
 /******************************** SV shm 괸련 선언 - end ********************************/
@@ -158,6 +164,15 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext)
 /***********************************************************************************/
 
 
+/***********************************************************************************/
+/******************************** semaphore lock - start ********************************/
+/***********************************************************************************/
+static sem_t sem_for_monitor;      //for monitor_thread에 message 전송 + 출력 sync
+ 
+
+/***********************************************************************************/
+/******************************** semaphore lock -end ********************************/
+/***********************************************************************************/
 
 
 /****************************************************************************************************/
@@ -179,6 +194,8 @@ int toy_mutex(char* *);                 //mutex
 int toy_shell(char* *);
 int toy_exit(char* *);
 int toy_message_queue(char* *);
+int toy_read_elf_header(char **args);
+
 
 
 /** featute : TOY> prompt에서 입력 받아서 실행 가능한 'cmd 명/cmd 함수 명' char 포인터 / 함수 포인터 배열로 선언 
@@ -189,14 +206,17 @@ char *builtin_str[] = {
     "mu",
     "sh",
     "exit",
-    "mq"
+    "mq",
+    "elf"
 };
+
 int (*builtin_func[]) (char **) = {
     &toy_send,
     &toy_mutex,
     &toy_shell,
     &toy_exit,
-    &toy_message_queue
+    &toy_message_queue,
+    &toy_read_elf_header
 
 };
 int toy_num_builtins(void);
@@ -204,6 +224,7 @@ int toy_num_builtins(void);
 
 /** feature : command_thread 실행에 포함되는 funcs
  *  @note command_thread() -> toy_loop() -> toy_read_line() -> toy_split_line() -> toy_execute()
+ *  @note "TOY> <cmd>" 로 실행되는 thread_func
 */ 
 void* command_thread(void *);
 void toy_loop(void);                        //mutex
@@ -223,11 +244,11 @@ void *sensor_thread(void* arg)            //mutex
 
     /** 0. shmget() / mq_send() 위한 var 선언 
      * @note shm_retcode, mq_retcode
-     * @note sensor_shm_key : shmget()으로부터 생성된 key value 저장
+     * @note shm_id[SHM_KEY_MAX-SHM_KEY_SENSOR] : shmget()으로부터 생성된 key value 저장
      * @note toy_msg_t msg_to_monitor : mqueue로 전송
     */
     int shm_retcode;
-    int sensor_shm_key;
+    int shm_id;
     int mq_retcode;
     toy_msg_t msg_to_monitor;
 
@@ -243,8 +264,8 @@ void *sensor_thread(void* arg)            //mutex
      * @note shmget() 를 사용하여 shm 생성 + key값 얻기
      * @return 생성된 shm segment's kev value(seg id) 
     */
-    sensor_shm_key = shmget(shm_key, sizeof(shm_sensor_t), IPC_CREAT | SHMGET_FLAGS);
-    assert(sensor_shm_key != -1);
+    shm_id = shmget(shm_key, sizeof(shm_sensor_t), IPC_CREAT | SHMGET_FLAGS);
+    assert(shm_id != -1);
 
     /** 2. shm segment 생성-2(shmgat()) 
      * @note shmgat() 를 사용하여 address에 shm을 attach
@@ -252,12 +273,13 @@ void *sensor_thread(void* arg)            //mutex
      * @note 2번째 argument NULL : kernel이 적절한(사용하지 않은) 주소를 붙임
      * @return attached shm's address
     */
-    the_sensor_info = (shm_sensor_t *)shmat(sensor_shm_key, NULL, SHMAT_FLAGS_RW);
+    the_sensor_info = (shm_sensor_t *)shmat(shm_id, NULL, SHMAT_FLAGS_RW);
     assert((void *)the_sensor_info != (void *)-1); 
 
-
+    sleep(5);
     while(1)
     {
+        
         sleep(5);
 
         /** 3. shm segment에 data 저장
@@ -280,12 +302,19 @@ void *sensor_thread(void* arg)            //mutex
 
         //1. send : 생성된 shm segment's kev value(seg id)를 전송
         msg_to_monitor.msg_type = 1;
-        msg_to_monitor.param1 = sensor_shm_key;
+        msg_to_monitor.param1 = shm_id;
         msg_to_monitor.param2 = 0;
         msg_to_monitor.param3 = NULL;
 
 
-        mq_retcode = mq_send(mqds[1], (char *)&msg_to_monitor, sizeof(msg_to_monitor), 0);
+        sem_wait(&sem_for_monitor);
+        mq_retcode = mq_send(mqds[1], (const char *)&msg_to_monitor, sizeof(msg_to_monitor), 0);
+        // mq_retcode = mq_send(mqds[1], &msg_to_monitor, MQ_MSG_SIZE, 0);
+        if(mq_retcode == -1) perror("mq_retcode");
+        assert(mq_retcode != -1);
+
+//        if(mq_retcode == -1) perror("mq_retcode");
+        sem_post(&sem_for_monitor);
 
 
         /***************************************************************************************/
@@ -378,7 +407,7 @@ int toy_message_queue(char* *args)
 //      msg.param3 = args[3];     //메세지 전달 추가 => 포인터를 전달하는거라 error발생
 
         mq_retcode = mq_send(mqds[3], (char *)&msg, sizeof(msg), 0);       //mqds[3] : "/camera_mq"
-        assert(mq_retcode == 0);
+        assert(mq_retcode != -1);
     }
 
     //mqretcode = mq_receive(prompt_perm_mqd, );
@@ -420,6 +449,54 @@ int toy_shell(char **args)
 
     return 1;
 }
+
+/** feature : toy_read_elf_header
+ *  @note 'TOY> elf' 입력시 실행동작 정의
+ *  @note TOY> elf <type> <filename>
+*/  
+int toy_read_elf_header(char **args)
+{
+    // sleep(5);
+
+    //1. sv shm 생성  
+    int shm_id; 
+    enum def_shm_key shm_key = SHM_KEY_CMD_R_FILE; 
+    
+    // shm_id = shmget(shm_key, sizeof(shm_str_msg_t), SHMGET_FLAGS);
+    shm_id = shmget(shm_key, sizeof(shm_str_msg_t), IPC_CREAT | SHMGET_FLAGS);
+    if(shm_id == -1) perror("mq_retcode");
+    assert(shm_id != -1);
+
+    the_str_msg_info = (char *)shmat(shm_id, NULL, SHMAT_FLAGS_RW);
+    assert((void *)the_str_msg_info != (void *)-1); 
+
+    //2. 생성된 sv shm에 write
+    the_str_msg_info->cnt = sizeof("/home/kahngju/devcourse/SysProg/Toy_project/toy/sample/sample.elf");
+    strncpy(the_str_msg_info->buf, "/home/kahngju/devcourse/SysProg/Toy_project/toy/sample/sample.elf", the_str_msg_info->cnt);
+
+    //3. mqueue로 전송
+    int mq_retcode;
+    toy_msg_t msg_to_monitor;
+
+    msg_to_monitor.msg_type = 2;           //CMD_DATA_R_ELF
+    msg_to_monitor.param1 = shm_id;
+    msg_to_monitor.param2 = 0;
+    msg_to_monitor.param3 = NULL;
+
+    while(1)
+    {
+        sleep(5);
+
+        sem_wait(&sem_for_monitor);
+        mq_send(mqds[1], (const char *)&msg_to_monitor, sizeof(msg_to_monitor), 1);
+        // mq_send(mqds[1], &msg_to_monitor, MQ_MSG_SIZE, 0);
+        assert(mq_retcode != -1);
+        sem_post(&sem_for_monitor);
+    }
+
+    return 1;
+}
+
 
 
 /** feature : toy_execute 
@@ -642,10 +719,13 @@ int input_server()
     /************************************ command thread, sensor thread 생성 - start *****************************/
     /****************************************************************************************************/
     
-    //1. pthread_t, pthread_attr_t 선언
+    //1_1. pthread_t, pthread_attr_t 선언
     pthread_t sensorTh_tid, commandTh_tid;
     pthread_attr_t sensorTh_attr, commandTh_attr;
     int retcode;
+
+    //1_2.
+    sem_init(&sem_for_monitor, 0, 1);
 
     //2. attr 초기화 + detach 설정
     if(pthread_attr_init(&sensorTh_attr)) perror("pthread_attr_init : sensorTh");

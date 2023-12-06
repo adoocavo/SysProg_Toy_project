@@ -10,6 +10,7 @@ enum def_shm_key                        /* Key for shared memory segment */
 {
     SHM_KEY_BASE = 10,
     SHM_KEY_SENSOR = SHM_KEY_BASE,
+    SHM_KEY_CMD_R_FILE,
     SHM_KEY_MAX
 };
 
@@ -29,6 +30,7 @@ enum def_shm_key                        /* Key for shared memory segment */
 */
 #define SHMAT_FLAGS_R (SHM_RDONLY)       
 #define SHMAT_FLAGS_RW 0
+#define SHM_STR_MSG_BUF_SIZE 1024
 
 /* Defines structure of shared memory segment for sensor thread */
 typedef struct shm_sensor                                
@@ -38,6 +40,16 @@ typedef struct shm_sensor
     int humidity;
 } shm_sensor_t;
 
-extern int shm_id[SHM_KEY_MAX - SHM_KEY_BASE];
+
+/* Defines structure of shared memory segment for transfering string data */
+typedef struct shm_str_msg 
+{                 
+    int cnt;                    /* Number of bytes used in 'buf' */
+    char buf[SHM_STR_MSG_BUF_SIZE];         /* Data being transferred */
+} shm_str_msg_t;
+
+
+/* shm_id[SHM_KEY_MAX - 사용 key MACRO] : shmget() return value 저장 */
+//extern int shm_id[SHM_KEY_MAX - SHM_KEY_BASE];
 
 #endif /* _SHARED_MEMORY_H */
