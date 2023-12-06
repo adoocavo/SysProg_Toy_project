@@ -6,7 +6,7 @@
 #include <mqueue.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-
+#include <assert.h>
 #include "./system/system_server.h"
 #include "./ui/gui.h"
 #include "./ui/input.h"
@@ -66,13 +66,13 @@ static void sigchld_handler(int sig)
 /***************************************************************************************/
 
 
-/** feature : system_server proc 내에서 생성되는 threads들의 msg queue mqd저장
- * 
-*/
-#define MQ_NUM_MSG 10                //각 posix msg queue에 저장될 수 있는 msg 개수
-//#define MQ_MSG_SIZE 2048             //각 msg의 size(default : 8KB)
-#define NUM_OF_MQ 4                  //생성할 message queue file 개수
-#define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) 
+// /** feature : system_server proc 내에서 생성되는 threads들의 msg queue mqd저장
+//  * 
+// */
+// #define MQ_NUM_MSG 10                //각 posix msg queue에 저장될 수 있는 msg 개수
+// #define MQ_MSG_SIZE 2048             //각 msg의 size(default : 8KB)
+// #define NUM_OF_MQ 4                  //생성할 message queue file 개수
+// #define FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) 
 /*
 static struct mq_attr watchdog_mq_attr;
 static struct mq_attr monitor_mq_attr;
@@ -174,13 +174,16 @@ int main()
 
     struct mq_attr attr;                        
     attr.mq_maxmsg = MQ_NUM_MSG;
-    attr.mq_msgsize = sizeof(toy_msg_t);
+    // attr.mq_msgsize = sizeof(toy_msg_t);
+    //attr.mq_msgsize = sizeof(MQ_MSG_SIZE);
+    attr.mq_msgsize = MQ_MSG_SIZE;
 
     //2. open : message queue create
     for(int i = 0; i <  NUM_OF_MQ; ++i)
     {
         // if(mqds[i] = mq_open(msg_queues_str[i], flags, perms, &attr) == -1) perror("mq_open");
-        if((mqds[i] = mq_open(msg_queues_str[i], flags, perms, &attr)) == -1) perror("mq_open");
+        mqds[i] = mq_open(msg_queues_str[i], flags, perms, &attr);
+        assert(mqds[i] != -1);
 
     }
 

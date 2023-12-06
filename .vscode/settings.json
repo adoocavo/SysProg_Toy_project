@@ -17,6 +17,10 @@
         "execinfo.h": "c",
         "stdio.h": "c",
         "toy_message.h": "c",
-        "shared_memory.h": "c"
+        "shared_memory.h": "c",
+        "mman.h": "c",
+        "semaphore.h": "c",
+        "currtime.h": "c",
+        "stat.h": "c"
     }
 }

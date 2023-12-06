@@ -16,6 +16,7 @@
 #include <semaphore.h>
 #include <sys/types.h>    /*for potability*/
 #include <sys/shm.h> 
+#include <sys/mman.h>
 
 #include "./../hal/camera_HAL.h"
 #include "system_server.h"
@@ -33,7 +34,11 @@
 /***************************************************************************************/
 /********************************  SV shm 괸련 선언 - start ********************************/
 /***************************************************************************************/
+
+//extern int shm_id[SHM_KEY_MAX - SHM_KEY_BASE];
+
 static shm_sensor_t *the_sensor_info = NULL; 
+static shm_str_msg_t *the_str_msg_info = NULL;
 
 
 /***************************************************************************************/
@@ -380,6 +385,8 @@ void * watchdog_thread_func(void *arg)
  * 
 */
 #define SENSOR_DATA 1
+#define CMD_DATA_R_ELF 2 
+
 void * monitor_thread_func(void *arg)
 {  
     char *str = arg;
@@ -390,7 +397,7 @@ void * monitor_thread_func(void *arg)
      * @note unsigned int prio : receive 받은 message의 우선 순위 저장
      * @note ssize_t numRead : 몇 byte message 수신했는지 저장
      * @note toy_msg_t *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
-     * @note key_t sensor_shm_key : for shmat() 
+     * @note key_t shm_key : for shmat() 
   
     */
     //0. open mq file in parent process
@@ -401,7 +408,9 @@ void * monitor_thread_func(void *arg)
     toy_msg_t *received_msg_buffer;
     unsigned int current_msg_num;
     struct timespec set_timeout; 
-    key_t sensor_shm_key;
+    key_t shm_key;
+    int retcode;
+
 
 
     if(mq_getattr(mqds[1], &attr) == -1) perror("mq_getattr(monitor_thread_func)");
@@ -431,19 +440,72 @@ void * monitor_thread_func(void *arg)
         printf("param2 : %d\n", received_msg_buffer->param2);
 
 
-        //3. 
+        /** feature : SENSOR_DATA 출력
+         * 
+         * 
+         * 
+         */ 
         if (received_msg_buffer->msg_type == SENSOR_DATA) 
         {
-            sensor_shm_key = received_msg_buffer->param1;
+            printf("/******************** sensor *************************/\n");
+
+            shm_key = received_msg_buffer->param1;
 
             //3_1. attaching to monitor_thread(input process)
-            the_sensor_info = (shm_sensor_t *)shmat(sensor_shm_key, NULL, SHMAT_FLAGS_R);
+            the_sensor_info = (shm_sensor_t *)shmat(shm_key, NULL, SHMAT_FLAGS_R);
 
             //3_2. 출력
             printf("temp : %d Celsius\n", the_sensor_info->temp);
             printf("press : %d mV\n", the_sensor_info->press);
             printf("humidity : %d RH\n", the_sensor_info->humidity);
 
+        }
+
+        /** feature : CMD_DATA_R_ELF 출력ㄴ
+         * 
+         * 
+         * 
+         */ 
+        if (received_msg_buffer->msg_type == CMD_DATA_R_ELF) 
+        {
+            printf("/******************** ELF file *************************/\n");
+
+            /** feature : shmat()을 사용하여 전달받을 string data가 저장된 shm의 key 얻기  
+             * 
+            */
+            char filename[SHM_STR_MSG_BUF_SIZE];
+            shm_key = received_msg_buffer->param1;
+
+            //3_1. attaching to monitor_thread(input process)
+            the_str_msg_info = (shm_str_msg_t *)shmat(shm_key, NULL, SHMAT_FLAGS_R);
+
+            //3_2. read할 filename 저장 + detach
+            strncpy(filename, the_str_msg_info->buf, the_str_msg_info->cnt);
+            retcode = shmdt((const void *)the_str_msg_info);
+            assert(retcode != -1);
+
+            /** feature : open() -> mmap() 사용하여 전달받은 file 출력 
+             * @note : Elf64Hdr *mapped_base_addr;      //process에 mapping된 시작 주소(vms) 저장  
+             * 
+            */
+            Elf64Hdr *mapped_base_addr;      //process에 mapping된 시작 주소(vms) 저장  
+            int fd;
+            
+            //1. open
+            fd = open((const char *)filename, O_RDONLY);
+            if(fd < 0 ) 
+            {
+                perror("open");
+            }
+
+            //2. mmap()
+            mapped_base_addr = (Elf64Hdr *)mmap(NULL, sizeof(Elf64Hdr), PROT_READ, MAP_PRIVATE, fd, 0);
+
+            //3. 출력
+            printf("Object file type : %u\n", mapped_base_addr->e_type);
+            printf("Architecture : %u\n", mapped_base_addr->e_machine);
+            printf("Object file version : %u\n", mapped_base_addr->e_version);
+            printf("Entry point virtual address : %u\n", mapped_base_addr->e_entry);
         }
 
 
