@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 // #include <bits/shm.h>
 #include <sys/shm.h>
+#include "/usr/include/linux/limits.h"        /* ??? : for NAME_MAX?*/
 
 /* Hard-coded keys for IPC objects */
 enum def_shm_key                        /* Key for shared memory segment */
@@ -11,6 +12,7 @@ enum def_shm_key                        /* Key for shared memory segment */
     SHM_KEY_BASE = 10,
     SHM_KEY_SENSOR = SHM_KEY_BASE,
     SHM_KEY_CMD_R_FILE,
+    SHM_KEY_DISK,
     SHM_KEY_MAX
 };
 
@@ -19,7 +21,9 @@ enum def_shm_key                        /* Key for shared memory segment */
 #define SHM_R		0400		// or S_IRUGO from <linux/stat.h> 
 #define SHM_W		0200		// or S_IWUGO from <linux/stat.h> 
 */
-#define SHMGET_FLAGS (SHM_R | SHM_W | S_IRGRP | S_IWGRP)       /* Permissions for our IPC objects */
+/* set of optons and permission bits */
+#define SHMGET_FLAGS_CREAT (IPC_CREAT | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)              /* 644*/  
+#define SHMGET_FLAGS_EXCL (IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)   /* 644*/    
 
 /*
 //Flags for `shmat'.  
@@ -49,7 +53,17 @@ typedef struct shm_str_msg
 } shm_str_msg_t;
 
 
+typedef struct shm_diskInfo_msg
+{
+    int readByte;
+    char filename[NAME_MAX];
+
+    int totalSize_of_dir;
+} shm_diskInfo_msg_t;
+
+
 /* shm_id[SHM_KEY_MAX - 사용 key MACRO] : shmget() return value 저장 */
 //extern int shm_id[SHM_KEY_MAX - SHM_KEY_BASE];
+
 
 #endif /* _SHARED_MEMORY_H */

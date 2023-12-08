@@ -17,7 +17,10 @@
 #include <sys/types.h>    /*for potability*/
 #include <sys/shm.h> 
 #include <sys/mman.h>
+#include <sys/inotify.h>
+#include <dirent.h>
 
+#include "/usr/include/linux/limits.h"        /* ??? : for NAME_MAX?*/
 #include "./../hal/camera_HAL.h"
 #include "system_server.h"
 #include "./../ui/gui.h"
@@ -122,6 +125,12 @@ void set_create_peridicTimer(long initial_sec, long initial_usec, long interval_
 */
 void signal_exit(void);
 
+/**
+ * 
+*/
+const int get_totalSize_of_dir(const char *);
+
+
 /***************************************************************************************/
 /******************************** timer signal 처리 괸련 선언 - end ********************************/
 /***************************************************************************************/
@@ -133,6 +142,7 @@ void signal_exit(void);
 
 //1. sem_t 변수 선언 
 static sem_t timeout_handler_sem;
+sem_t sem_for_monitor;
 
 /***************************************************************************************/
 /******************************** unnamed semaphore 괸련 선언 - end ********************************/
@@ -172,6 +182,7 @@ void * camera_service_thread_func(void *);
 void * timer_thread_func(void *);
 
 
+
 /** thread_func array 
  *  @note idx 순서대로 
 */
@@ -209,6 +220,11 @@ int system_server()
     /****************************************************************************************************/
     for(int i = 0; i < NUM_OF_MQ; ++i)
     {
+        if(i == 1)
+        {
+            mqds[i] = mq_open(msg_queues_str[i], O_RDWR);
+            continue; 
+        }
         mqds[i] = mq_open(msg_queues_str[i], O_RDONLY);
         assert(mqds[i] != -1);
     }
@@ -386,6 +402,7 @@ void * watchdog_thread_func(void *arg)
 */
 #define SENSOR_DATA 1
 #define CMD_DATA_R_ELF 2 
+#define DISK_INFO 3
 
 void * monitor_thread_func(void *arg)
 {  
@@ -509,6 +526,35 @@ void * monitor_thread_func(void *arg)
         }
 
 
+
+        /** feature : DISK_INFO 출력
+         * 
+         * 
+         * 
+         */ 
+        if (received_msg_buffer->msg_type == DISK_INFO) 
+        {
+            printf("/******************** DISK_INFO *************************/\n");
+
+            /** feature : shmat()을 사용하여 전달받을 DISK data가 저장된 shm의 key 얻기  
+             * 
+            */
+            shm_diskInfo_msg_t *shm_diskInfo_msg_ptr; 
+            shm_key = received_msg_buffer->param1;
+
+            //1. attaching to monitor_thread(input process)
+            shm_diskInfo_msg_ptr = (shm_diskInfo_msg_t *)shmat(shm_key, NULL, SHMAT_FLAGS_R);
+
+            //2. 출력
+            printf("Read %ld bytes from inotify fd\n", (long) (shm_diskInfo_msg_ptr->readByte));
+            printf("        created filename = %s\n", shm_diskInfo_msg_ptr->filename);
+            printf("\nTotal Directory size : %ld\n", (long) (shm_diskInfo_msg_ptr->totalSize_of_dir));
+        
+            retcode = shmdt((const void *)shm_diskInfo_msg_ptr);
+            assert(retcode != -1);
+
+        }
+
         printf("/******************** monitor - end ********************/\n\n");
 
     }
@@ -519,54 +565,121 @@ void * monitor_thread_func(void *arg)
 /** feature : disk_service_thread_func definition 
  * @note  10초마다 disk 사용량 출력
 */
-#define POPEN_FMT "/bin/df -h ./"
-#define PCMD_BIF_SIZE 1024
+#define TARGET_DIR "/home/kahngju/devcourse/SysProg/Toy_project/toy/fs"
+// #define INOTIFY_EVENT_BUF_LEN (10 * sizeof(struct dirent))      
+
+/**
+ * @note 1번 수신할 때, 여러개의 event(여러개의 event가 monitoring 대상)가 존재 가능 ->  num of event queue 내의 msg
+ * @note num of event queue * (sizeof(struct inotify_event) + (max filename) + (1 : for null)  ) 
+*/
+#define INOTIFY_EVENT_BUF_LEN (10 * (sizeof(struct inotify_event) + NAME_MAX + 1)) 
+
 void * disk_service_thread_func(void *arg)
 {  
     char *str = arg;
     printf("나 %s\n", str);
-
-    /** feature : receive data form "/disk_mq" (message queue를 사용한 data IPC)
-     * @note mq_getattr().mq_msgsize : receive 하여 저장할 buffer size 지정 위해 사용
-     * @note unsigned int prio : receive 받은 message의 우선 순위 저장
-     * @note ssize_t numRead : 몇 byte message 수신했는지 저장
-     * @note toy_msg_t *received_msg_buffer : mq_receive()로 받은 data를 저장할 buffer
+    
+    /** feature : (detecting the file || directory event) + (direc open -> r/w)
+     * @note inotify_init() : return fd refering to inotify event queue
+     * @note inotify_add_watch() : return a fd of watching file(used to manipulate or remove the watch)
+     * @note event queue에 watching fd를 추가 -> fd에 대한 변화 monitoring
+     * 
+     * @note opendir(TARGET_DIR) : retunrn the direc stream opened
+     * @note readdir(DIR *dirp) : read the next entry from a directory stream(DIR *)
     */
-    //0. open mq file in parent process
+    //1. inotify_init() -> inotify_add_watch() : TARGET_DIR를 watch directory로 지장
+    int disk_inotify_fd = inotify_init();             /* inotify event queue에 대한 fd  */
+    int watch_dir_fd = inotify_add_watch(disk_inotify_fd, TARGET_DIR, IN_CREATE);
+    // int watch_dir_fd = inotify_add_watch(disk_inotify_fd, TARGET_DIR, IN_CREATE | IN_MODIFY);
 
-    //1. receive 하기위한 setting : mq_getattr() -> received_msg_buffer 동적할당
-    struct mq_attr attr;
-    unsigned int prio_of_msg;
-    toy_msg_t *received_msg_buffer;
-    unsigned int current_msg_num;
-    struct timespec set_timeout; 
+    //2. opendir()   
+    //DIR *dir_stream_ptr = opendir(TARGET_DIR);
 
-    if(mq_getattr(mqds[2], &attr) == -1) perror("mq_getattr(camera_service_thread_func)");
-    received_msg_buffer = malloc(attr.mq_msgsize);
-    set_timeout.tv_sec = 500;
-    set_timeout.tv_nsec = 0;
+    //3.
+    shm_diskInfo_msg_t *shm_diskInfo_msg_ptr; 
+    int shm_id = shmget(SHM_KEY_DISK, sizeof(shm_diskInfo_msg_t), SHMGET_FLAGS_CREAT);
+    shm_diskInfo_msg_ptr = (shm_diskInfo_msg_t*)shmat(shm_id, NULL, SHMAT_FLAGS_RW);
 
-
-    //2. receive
-    ssize_t numRead;           //몇 byte message 수신했는지 저징
-
+    
+    //4.inotify event queue에 등록된 event monitoring
+    int readByte_of_inotifyEvent;
+    char read_inotifyEvent_buffer[INOTIFY_EVENT_BUF_LEN];
+    char *p;
+    struct inotify_event *event;
     while(1)
     {
-        //2_1. receive
-        numRead = mq_receive(mqds[2], (char *)received_msg_buffer, attr.mq_msgsize, &prio_of_msg);
-        //numRead = mq_timedreceive(mqds[2], received_msg_buffer, attr.mq_msgsize, &prio_of_msg, &set_timeout);
-        assert(numRead != -1);
 
-        //2_2. 받은 message 출력
-        printf("(%s) Read %ld bytes; priority : %u\n\n", msg_queues_str[2], numRead, prio_of_msg);
+        /****************************************************************************************************/
+        /************************************* inotify로 받은 event정보 shm에 저장 - start *******************************************/
+        /****************************************************************************************************/
+        //1. event 발생
+        readByte_of_inotifyEvent = read(disk_inotify_fd, read_inotifyEvent_buffer, INOTIFY_EVENT_BUF_LEN);
+        if(readByte_of_inotifyEvent == -1) perror("read(disk_inotify_fd)");
+        if(readByte_of_inotifyEvent == 0) perror("read(return 0 byte)");
 
-        printf("msg_type : %d\n", ((toy_msg_t*)received_msg_buffer)->msg_type);
-        printf("param1 : %d\n", ((toy_msg_t*)received_msg_buffer)->param1);
-        printf("param2 : %d\n", ((toy_msg_t*)received_msg_buffer)->param2);
+        /** ??? : 2개 이상의 event를 shm에 저장하는 방법??
+         * 
+        */
+        //2. readByte 저장
+        shm_diskInfo_msg_ptr->readByte = readByte_of_inotifyEvent;
 
-        printf("\n");
+        for (p = read_inotifyEvent_buffer; p < read_inotifyEvent_buffer + readByte_of_inotifyEvent; ) 
+        {
+            event = (struct inotify_event *) p;
+            
+            //3. event 발생시킨 filename 저장(IN_CREATE : 생성된 filen ame)
+            // strncpy(shm_diskInfo_msg_ptr->filename, event->name, strlen(event->name));
+            strncpy(shm_diskInfo_msg_ptr->filename, event->name, strlen(event->name)+1);
+
+            p += sizeof(struct inotify_event) + event->len;
+        }        
+        /****************************************************************************************************/
+        /************************************* inotify로 받은 event정보 shm에 저장 - start *******************************************/
+        /****************************************************************************************************/
+        
+        /****************************************************************************************************/
+        /************************************* 현재 direc내의 모든 file 용량 저장 - start *******************************************/
+        /****************************************************************************************************/ 
+        int totalSize;
+
+        totalSize = get_totalSize_of_dir(TARGET_DIR);
+        shm_diskInfo_msg_ptr->totalSize_of_dir = totalSize;
+        /****************************************************************************************************/
+        /************************************* 현재 direc내의 모든 file 용량 저장 - start *******************************************/
+        /****************************************************************************************************/ 
+
+
+
+        /***************************************************************************************/
+        /******************************** message queue 전송(send) - start ********************************/
+        /***************************************************************************************/
+        //0. open 
+        toy_msg_t msg_to_monitor;
+        int mq_retcode;
+
+        //1. send : 생성된 shm segment's kev value(seg id)를 전송
+        msg_to_monitor.msg_type = 3;
+        msg_to_monitor.param1 = shm_id;
+        msg_to_monitor.param2 = 0;
+        msg_to_monitor.param3 = NULL;
+
+
+        //sem_wait(&sem_for_monitor);
+       
+        mq_retcode = mq_send(mqds[1], (const char *)&msg_to_monitor, sizeof(msg_to_monitor), 0);
+        // mq_retcode = mq_send(mqds[1], &msg_to_monitor, MQ_MSG_SIZE, 0);
+        if(mq_retcode == -1) perror("mq_retcode");
+        assert(mq_retcode != -1);
+
+        //sem_post(&sem_for_monitor);
+
+        /***************************************************************************************/
+        /******************************** message queue 전송(send) - end ********************************/
+        /***************************************************************************************/
+
     }
 
+    
     return NULL;
 }
 
@@ -826,4 +939,70 @@ void disk_report(void)
     /****************************************************************************************************/
     /******************* popen : "/bin/df -h ./" 실행 - end *******************************************/
     /****************************************************************************************************/
+}
+
+
+
+
+/** feature : get_totalSize_of_dir
+ * @note ??? : ./fs의 meta data도 포함?
+*/
+#define FILEPATH_LEN 1024
+const int get_totalSize_of_dir(const char *target_dirname)
+{
+    struct dirent *entry_ptr;
+    struct stat statbuf;
+    int stat_retcode;
+
+    int sum = 0;
+    int each_fileSize;
+    int cnt_files = 0;
+
+    char filePath[FILEPATH_LEN];
+    
+    // DIR *dir_stream_ptr = opendir(TARGET_DIR);
+    DIR *dir_stream_ptr = opendir(target_dirname);
+
+    //while((entry_ptr = readdir(target_dirname)) != NULL)
+    while((entry_ptr = readdir(dir_stream_ptr)) != NULL)
+    {
+        if (strcmp(entry_ptr->d_name, ".") == 0 || strcmp(entry_ptr->d_name, "..") == 0)
+        // if(strcmp(entry_ptr->d_name, "..") == 0)     /*  현재 directory(./fs)의 metadata 포함 */
+            continue;
+
+        //1. 각 file의 path 구하기
+        sprintf(filePath, "%s/%s", target_dirname, entry_ptr->d_name);
+        // printf("access to %s\n", filePath);
+
+        //2. 각 file의 size 구하기
+        if((stat_retcode = stat(filePath, &statbuf)) == -1) 
+        {
+            perror("stat");
+        }
+        assert(stat_retcode != -1);
+
+        each_fileSize = statbuf.st_size;
+
+        //3. 
+        // ++cnt_files;
+        if(S_ISDIR(statbuf.st_mode))
+        // if(S_ISDIR(statbuf.st_mode) && (strcmp(entry_ptr->d_name, ".")))
+        // if(S_ISDIR(statbuf.st_mode) && (strcmp(entry_ptr->d_name, ".")) != 0)
+        {
+            long dirSize = get_totalSize_of_dir(filePath) + each_fileSize;   //??
+            sum += dirSize;
+        }
+        else
+            sum += each_fileSize;
+
+        //return sum;
+        
+    }
+
+    // printf("num of file : %d\n", cnt_files);
+    return sum;
+
+
+
+
 }

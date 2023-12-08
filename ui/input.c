@@ -167,7 +167,7 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext)
 /***********************************************************************************/
 /******************************** semaphore lock - start ********************************/
 /***********************************************************************************/
-static sem_t sem_for_monitor;      //for monitor_thread에 message 전송 + 출력 sync
+extern sem_t sem_for_monitor;      //for monitor_thread에 message 전송 + 출력 sync
  
 
 /***********************************************************************************/
@@ -264,7 +264,7 @@ void *sensor_thread(void* arg)            //mutex
      * @note shmget() 를 사용하여 shm 생성 + key값 얻기
      * @return 생성된 shm segment's kev value(seg id) 
     */
-    shm_id = shmget(shm_key, sizeof(shm_sensor_t), IPC_CREAT | SHMGET_FLAGS);
+    shm_id = shmget(shm_key, sizeof(shm_sensor_t), SHMGET_FLAGS_CREAT);
     assert(shm_id != -1);
 
     /** 2. shm segment 생성-2(shmgat()) 
@@ -462,8 +462,8 @@ int toy_read_elf_header(char **args)
     int shm_id; 
     enum def_shm_key shm_key = SHM_KEY_CMD_R_FILE; 
     
-    // shm_id = shmget(shm_key, sizeof(shm_str_msg_t), SHMGET_FLAGS);
-    shm_id = shmget(shm_key, sizeof(shm_str_msg_t), IPC_CREAT | SHMGET_FLAGS);
+    // shm_id = shmget(shm_key, sizeof(shm_str_msg_t), SHMGET_FLAGS_CREAT);
+    shm_id = shmget(shm_key, sizeof(shm_str_msg_t), SHMGET_FLAGS_CREAT);
     if(shm_id == -1) perror("mq_retcode");
     assert(shm_id != -1);
 
@@ -483,16 +483,16 @@ int toy_read_elf_header(char **args)
     msg_to_monitor.param2 = 0;
     msg_to_monitor.param3 = NULL;
 
-    while(1)
-    {
-        sleep(5);
+    // while(1)
+    // {
+        // sleep(5);
 
-        sem_wait(&sem_for_monitor);
-        mq_send(mqds[1], (const char *)&msg_to_monitor, sizeof(msg_to_monitor), 1);
-        // mq_send(mqds[1], &msg_to_monitor, MQ_MSG_SIZE, 0);
-        assert(mq_retcode != -1);
-        sem_post(&sem_for_monitor);
-    }
+    //sem_wait(&sem_for_monitor);
+    mq_send(mqds[1], (const char *)&msg_to_monitor, sizeof(msg_to_monitor), 1);
+    // mq_send(mqds[1], &msg_to_monitor, MQ_MSG_SIZE, 0);
+    assert(mq_retcode != -1);
+    //sem_post(&sem_for_monitor);
+    // }
 
     return 1;
 }
@@ -735,8 +735,8 @@ int input_server()
     if(pthread_attr_setdetachstate(&commandTh_attr, PTHREAD_CREATE_DETACHED)) perror("pthread_attr_setdetachstate : commandTh");
 
     //3. thread 생성
-    if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
-    assert(retcode == 0);
+    // if((retcode = pthread_create(&sensorTh_tid, &sensorTh_attr, sensor_thread, (void *)"sensor_thread\n"))) perror("pthread_create : sensorTh");
+    // assert(retcode == 0);
 
     if((retcode = pthread_create(&commandTh_tid, &commandTh_attr, command_thread, (void *)"command_thread\n"))) perror("pthread_create : commandTh");
     assert(retcode == 0);

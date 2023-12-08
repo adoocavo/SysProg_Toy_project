@@ -21,6 +21,11 @@
         "mman.h": "c",
         "semaphore.h": "c",
         "currtime.h": "c",
-        "stat.h": "c"
+        "stat.h": "c",
+        "mqueue.h": "c",
+        "limits.h": "c",
+        "*.tcc": "c",
+        "functional": "c",
+        "istream": "c"
     }
 }
