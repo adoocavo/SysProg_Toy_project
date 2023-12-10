@@ -985,6 +985,10 @@ const int get_totalSize_of_dir(const char *target_dirname)
 
         //3. 
         // ++cnt_files;
+
+        /** feature : tree ds로 구현(dir)
+         * 
+        */
         if(S_ISDIR(statbuf.st_mode))
         // if(S_ISDIR(statbuf.st_mode) && (strcmp(entry_ptr->d_name, ".")))
         // if(S_ISDIR(statbuf.st_mode) && (strcmp(entry_ptr->d_name, ".")) != 0)
