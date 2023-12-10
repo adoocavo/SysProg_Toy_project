@@ -91,9 +91,8 @@ void *sensor_thread(void* arg)
     return 0;
 }
 
-/* feature : command thread
- * 
- */
+/******************************** command thread 실행 관련 함수 정의********************************/
+
 int toy_send(char **args);
 int toy_shell(char **args);
 int toy_exit(char **args);
@@ -233,7 +232,13 @@ void toy_loop(void)
         free(args);
     } while (status);
 }
+/******************************** command thread 실행 관련 함수 정의********************************/
 
+
+
+/* feature : command thread
+ * 
+ */
 void *command_thread(void* arg)
 {
     char *s = arg;
