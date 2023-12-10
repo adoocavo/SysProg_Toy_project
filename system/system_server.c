@@ -19,7 +19,7 @@
 #define TIMER_SIG SIGRTMAX      //POSIX RTS 사용
 
 
-/** feature : main process가 생성한 모든 process monitoring 
+/** feature : initial_sec.initial_usec, interval_sec.interval_usec으로 timer 속성 설정 + 생성 
  * @param {long} initial_sec, initial_usec, interval_sec, interval_usec
  * @return {void} 
  * @todo  posix timer set + create (by using timer_create() and timer_create())
