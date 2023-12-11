@@ -234,11 +234,12 @@ int system_server()
     printf("system init done.  waiting...\n");
 
 
-    // 여기에 구현하세요... 여기서 cond wait로 대기한다. 10초 후 알람이 울리면 <== system 출력
+    // 여기에 구현하세요... 여기서 cond wait로 대기한다. (timer에서 지정한 간격마다)알람이 울리면 <== system 출력
     pthread_mutex_lock(&system_loop_mutex);
     while (system_loop_exit == false) 
     {
         pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
+        // printf("<== system\n"); 
     }
     pthread_mutex_unlock(&system_loop_mutex);
 
