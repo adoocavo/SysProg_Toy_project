@@ -1,6 +1,6 @@
 # SysProg_Toy_project
 
-## 1. Makefile 작성 & git 작업 관련 내용
+## 1. Makefile 작성 & git 작업규칙 관련 내용
 https://nice-impulse-6a4.notion.site/Makefile-0ca20ff9fc0e4dc091a6207073897d85?pvs=4
 
 ## 2. branch별 관련 system call 사용하여 C code 작성 
