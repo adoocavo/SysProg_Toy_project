@@ -10,5 +10,4 @@ https://nice-impulse-6a4.notion.site/Makefile-0ca20ff9fc0e4dc091a6207073897d85?p
 08_mutex
 09_multi-thread-sync
 11_mqueue
-12_semaphore
 13_systemV-shm 
