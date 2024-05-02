@@ -12,5 +12,4 @@ https://nice-impulse-6a4.notion.site/Makefile-0ca20ff9fc0e4dc091a6207073897d85?p
 10_pipe
 11_mqueue
 12_semaphore
-13_systemV-shm
-14_mmap 
+13_systemV-shm 
